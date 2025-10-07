@@ -1,0 +1,8 @@
+## Interface: 11200
+## Title: CorruptedLootCouncil
+## Notes: Loot Council Helper for Vanilla (1.12)
+## Author: amptie
+## Version: 0.1
+## SavedVariables: CLC_DB
+
+main.lua
