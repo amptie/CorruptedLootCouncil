@@ -5,12 +5,12 @@
 ------------------------------------------------------------
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
-  zones = { 
+  zones = {
   ["Tower of Karazhan"] = true,
   ["The Rock of Desolation"] = true,
   ["Rock of Desolation"] = true,
-  },       -- optional: z.B. ["Molten Core"]=true
-  itemWhitelist = {  -- Itemnamen, die immer ein Popup bekommen
+  },
+  itemWhitelist = {
   ["Carapace Handguards"] = true,
   ["Gloves of the Primordial Burrower"] = true,
   ["Badge of the Swarmguard"] = true,
@@ -29,9 +29,9 @@ CLC_DB = CLC_DB or {
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
-    acceptZonePush = true,  -- Spieler nimmt standardmäßig Pushes an
+    acceptZonePush = true,
   },
-  councilRanks = {   -- wer das Officer-Panel sehen darf
+  councilRanks = {
     ["Officer"] = true,
     ["Offizier"] = true,
     ["Bereichsleitung"] = true,
@@ -49,7 +49,6 @@ CLC_DB = CLC_DB or {
 	["Yatamo"]=true, -- Yaijin
 	["Zacki"]=true, -- Zacka
 	["Sheeld"]=true, -- Sheed
-	
   },
   rankTwink     = CLC_DB and CLC_DB.rankTwink     or {
 	["Velaria"]=true, -- Celebrindal
@@ -86,13 +85,12 @@ CLC_DB = CLC_DB or {
 	["Shead"]=true, -- Sheed
 	["Sheedtha"]=true, -- Sheed
 	["Bulco"]=true, -- Sheed
-	
-  }, 
-  lootDuration = 45, -- Sekunden für das Spieler-Popup
+  },
+  lootDuration = 60,
   ui = {
-    anchor = { point="CENTER", rel="CENTER", x=0, y=0 },           -- Lootfenster-Anker
-    officer = { point="CENTER", rel="CENTER", x=0, y=0 },          -- Officer-Panel
-    ml      = { point="TOPRIGHT", rel="TOPRIGHT", x=-40, y=-160 }, -- ML-Panel
+    anchor = { point="CENTER", rel="CENTER", x=0, y=0 },
+    officer = { point="CENTER", rel="CENTER", x=0, y=0 },
+    ml      = { point="TOPRIGHT", rel="TOPRIGHT", x=-40, y=-160 },
   },
 }
 
@@ -136,27 +134,19 @@ frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 CLC_IsRaid = false
 CLC_InAllowedZone = true
 CLC_SessionActive = false
-CLC_IsMasterLooter = false
 
--- Antworten je Item: key -> { {name=, choice=, rank=, comment=, roll=} ... }
+-- Antworten je Item: key -> { {name=, choice=, comment=, roll=} ... }
 CLC_Responses = {}
--- Aktive Items (Reihenfolge im Officer-Panel)
 CLC_Items = {}
--- Votes: itemKey -> voter -> { [target]=true, ... }
 CLC_Votes = {}
 
 CLC_OfficerIndex = 1
-CLC_ItemWindows = {} -- itemKey -> frame
+CLC_ItemWindows = {}
 CLC_AnchorFrame = nil
 CLC_EditSeq = CLC_EditSeq or 0
--- Pending Rolls: echte Chat-Rolls abwarten und dann erst senden
-CLC_PendingRollQueues = CLC_PendingRollQueues or { ["1-10"] = {}, ["1-100"] = {} }
 
-local function CLC_EnqueuePendingRoll(itemKey, choice, comment, mn, mx)
-  local k = tostring(mn).."-"..tostring(mx)
-  CLC_PendingRollQueues[k] = CLC_PendingRollQueues[k] or {}
-  table.insert(CLC_PendingRollQueues[k], { key=itemKey, choice=choice, comment=comment or "" })
-end
+-- Pending Rolls (echte Chat-Rolls abwarten)
+CLC_PendingRollQueues = CLC_PendingRollQueues or { ["1-10"] = {}, ["1-100"] = {} }
 
 ------------------------------------------------------------
 -- Utils (Lua 5.0 safe)
@@ -165,6 +155,12 @@ local function tlen(t) return table.getn(t) end
 local function now() return time() end
 local function playerName() local n=UnitName("player"); return n or "?" end
 local function isRaid() return GetNumRaidMembers() and GetNumRaidMembers() > 0 end
+
+-- Ersatz für string.match (Lua 5.0 hat oft kein .match)
+local function SMATCH(str, pattern)
+  local a,b,c,d,e,f,g,h,i,j = string.find(str, pattern)
+  return c,d,e,f,g,h,i,j
+end
 
 -- true, wenn die Zonen-Whitelist mindestens einen Eintrag hat
 local function hasZoneWhitelist()
@@ -184,6 +180,7 @@ local function inAllowedZone()
   end
   return CLC_DB.zones[z] == true
 end
+
 local function itemKeyFromLink(link) return link or "?" end
 
 -- Chat-Safety (gegen CTL)
@@ -197,7 +194,7 @@ end
 function CLC_OfficerSay(text) SendChatMessage(CLC_EscapeChat(text), "OFFICER") end
 function CLC_ItemTextFromLink(link)
   if not link then return "[]" end
-  local name = string.match(link, "%[([^%]]+)%]")
+  local name = SMATCH(link, "%[([^%]]+)%]")
   if name then return "["..name.."]" end
   return tostring(link)
 end
@@ -225,25 +222,6 @@ local function SavePos(frameRef, slot)
   }
 end
 
-local function CLC_SerializeZones()
-  local t = {}
-  local k,v
-  for k,v in pairs(CLC_DB.zones or {}) do
-    if v then table.insert(t, k) end
-  end
-  table.sort(t)
-  return table.concat(t, ";")
-end
-
-local function CLC_ApplyZonesFromString(s)
-  CLC_DB.zones = {}
-  if not s or s == "" then return end
-  local z
-  for z in string.gfind(s, "([^;]+)") do
-    CLC_DB.zones[z] = true
-  end
-end
-
 local function RestorePos(frameRef, slot, defaultPoint, defaultRel, dx, dy)
   CLC_EnsureDB()
   if not CLC_DB.ui then CLC_DB.ui = {} end
@@ -256,49 +234,6 @@ end
 -- Ränge / Council
 ------------------------------------------------------------
 local function refreshGuildRoster() GuildRoster() end
-
-local function isCouncil(name)
-  local i
-  for i=1, GetNumRaidMembers() do
-    local unit = "raid"..i
-    local uname = UnitName(unit)
-    if uname == name then
-      local gname, rank = GetGuildInfo(unit)
-      local isLead = IsRaidLeader(unit)
-      local isAssist = IsRaidOfficer(unit)
-
-      -- "Raider Veteran" hat KEIN Panel—außer RL/RA explizit gesetzt
-      if rank == "Raider Veteran" then
-        return (isLead or isAssist) and true or false
-      end
-
-      -- Council-Ränge (Officer/Bereichsleitung) dürfen
-      if rank and CLC_DB.councilRanks and CLC_DB.councilRanks[rank] then
-        return true
-      end
-
-      -- RL/RA dürfen immer
-      if isLead or isAssist then
-        return true
-      end
-
-      return false
-    end
-  end
-
-  -- Fallback für mich selbst (falls nicht in Raidliste aufgelöst)
-  if name == playerName() then
-    local gname, rank = GetGuildInfo("player")
-    if rank == "Raider Veteran" then
-      return false
-    end
-    if rank and CLC_DB.councilRanks and CLC_DB.councilRanks[rank] then
-      return true
-    end
-  end
-
-  return false
-end
 
 local function getGuildRankByRoster(name)
   local num = GetNumGuildMembers()
@@ -330,32 +265,52 @@ local function getGuildRank(name)
 end
 
 -- Sichtbarer Rang im Officer-Panel:
--- 1) Council-Ränge zu "Raider"
--- 2) Dann Whitelists anwenden: rankRaidTwink > rankTwink
+-- 1) Whitelists zuerst (Raid Twink / Twink)
+-- 2) "Raider Veteran" -> "Raider"
+-- 3) Council-Ränge -> "Raider"
 local function getDisplayRank(name)
-  -- 1) Whitelists zuerst (überschreiben alles)
   if CLC_DB.rankRaidTwink and CLC_DB.rankRaidTwink[name] then
     return "Raid Twink"
   end
   if CLC_DB.rankTwink and CLC_DB.rankTwink[name] then
     return "Twink"
   end
-
-  -- 2) Gildenrang ermitteln
   local r = getGuildRank(name) or ""
-
-  -- 3) "Raider Veteran" wird als "Raider" dargestellt
   if r == "Raider Veteran" then
     return "Raider"
   end
-
-  -- 4) Council-Ränge (Officer/Bereichsleitung) ebenfalls als "Raider" anzeigen
   if r ~= "" and CLC_DB.councilRanks and CLC_DB.councilRanks[r] then
     return "Raider"
   end
-
-  -- 5) Sonst Originalrang
   return r
+end
+
+-- Wer darf das Officer-Panel sehen (wie von dir gewünscht: kein Raider Veteran; RL/RA erlaubt)
+local function isCouncil(name)
+  local i
+  for i=1, GetNumRaidMembers() do
+    local unit = "raid"..i
+    local uname = UnitName(unit)
+    if uname == name then
+      local gname, rank = GetGuildInfo(unit)
+      local isLead = IsRaidLeader(unit)
+      local isAssist = IsRaidOfficer(unit)
+      if rank == "Raider Veteran" then
+        return (isLead or isAssist) and true or false
+      end
+      if rank and CLC_DB.councilRanks and CLC_DB.councilRanks[rank] then
+        return true
+      end
+      if isLead or isAssist then return true end
+      return false
+    end
+  end
+  if name == playerName() then
+    local gname, rank = GetGuildInfo("player")
+    if rank == "Raider Veteran" then return false end
+    if rank and CLC_DB.councilRanks and CLC_DB.councilRanks[rank] then return true end
+  end
+  return false
 end
 
 ------------------------------------------------------------
@@ -368,15 +323,38 @@ local function CLC_Send(tag, payload)
 end
 
 ------------------------------------------------------------
--- Session & Loot-Scan (Master Looter)
+-- Loot-Trigger-Rechte
 ------------------------------------------------------------
-local function updateMasterLooter() local method=GetLootMethod(); CLC_IsMasterLooter=(method=="master") end
+local function PlayerIsMasterLooter()
+  local method, mlParty, mlRaid = GetLootMethod()
+  if method ~= "master" then return false end
+  if mlRaid then
+    return UnitIsUnit("raid"..mlRaid, "player")
+  elseif mlParty ~= nil then
+    if mlParty == 0 then return true end -- 0 = du selbst
+    return UnitIsUnit("party"..mlParty, "player")
+  end
+  return false
+end
 
+local function CanPlayerTriggerLoot()
+  local method = select(1, GetLootMethod())
+  if method == "master" then
+    return PlayerIsMasterLooter()
+  else
+    -- Fallback: Nur der Raidlead darf auslösen, wenn kein Master Loot aktiv ist
+    return IsRaidLeader()
+  end
+end
+
+------------------------------------------------------------
+-- Session & Loot-Scan
+------------------------------------------------------------
 local function isEpicOrWhitelisted(slot)
   local texture, name, qty, quality = GetLootSlotInfo(slot)
   if not name then return false end
   if CLC_DB.itemWhitelist[name] then return true end
-  if quality and quality >= 4 then return true end -- episch
+  if quality and quality >= 4 then return true end
   return false
 end
 
@@ -412,36 +390,36 @@ end
 
 function CLC_BroadcastLoot()
   if CLC_SessionActive then return end
-  if not CLC_IsMasterLooter or not CLC_IsRaid then return end
+  if not CLC_IsRaid then return end
+  if not CanPlayerTriggerLoot() then return end
 
-  local items = collectQualifyingLoot()  -- enthält epische ODER whiteliste Items
+  local items = collectQualifyingLoot()
   if tlen(items) == 0 then return end
 
-  -- NEU: Wenn wir NICHT in einer erlaubten Zone sind, dann nur weitermachen,
-  --       wenn wenigstens EIN Item explizit in der itemWhitelist steht.
+  -- Außerhalb erlaubter Zonen: NUR Whitelist-Items anzeigen (auch wenn Epics dabei sind)
   if not CLC_InAllowedZone then
-    local anyWL = false
+    local filtered = {}
     local i
-    for i = 1, tlen(items) do
+    for i=1, tlen(items) do
       local link = items[i].link
-      local name = link and string.match(link, "%[([^%]]+)%]")
+      local name = link and SMATCH(link, "%[([^%]]+)%]")
       if name and CLC_DB.itemWhitelist[name] then
-        anyWL = true
-        break
+        table.insert(filtered, items[i])
       end
     end
-    if not anyWL then
-      return -- außerhalb der Zone, aber kein Whitelist-Item: nicht triggern
-    end
+    items = filtered
+    if tlen(items) == 0 then return end
   end
 
-  -- wie gehabt: Session starten + Items senden
   startSessionIfNeeded()
   local i
-  for i = 1, tlen(items) do
+  for i=1, tlen(items) do
     CLC_Send("ITEM", items[i].link.."^"..(items[i].tex or ""))
   end
-  CLC_ShowMLFrame()
+  -- ML-Panel nur zeigen, wenn ich wirklich ML bin (oder RL ohne master)
+  if CanPlayerTriggerLoot() then
+    CLC_ShowMLFrame()
+  end
 end
 
 ------------------------------------------------------------
@@ -499,14 +477,12 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
 
   local f = CreateFrame("Frame", "CLC_ItemWin_"..tostring(now()), UIParent)
   f:SetWidth(380); f:SetHeight(150); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
+
   -- Close-Button (X) oben rechts: entspricht "Pass"
   local closeX = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   closeX:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
-  -- Überschreibe Standard-Hide: wir wollen "PASS" senden
-  closeX:SetScript("OnClick", function()
-    CLC_SendResponse(key, "PASS", "")
-    CLC_CloseItemWindow(key)
-  end)
+  closeX:SetScript("OnClick", function() CLC_SendResponse(key, "PASS", ""); CLC_CloseItemWindow(key) end)
+
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() this:StartMoving() end)
   f:SetScript("OnDragStop",  function() this:StopMovingOrSizing() end)
@@ -530,55 +506,51 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
   local bRoll = mkBtn("Roll",    14+84, -46-24, 60)
   local bPass = mkBtn("Pass",    14+84+68, -46-24, 60)
 
-  -- Kommentar rechts, tiefer (nicht mehr hinter Buttons)
+  -- Kommentar rechts, tiefer
   CLC_EditSeq = CLC_EditSeq + 1
   local edit = CreateFrame("EditBox", "CLC_ItemEdit_"..tostring(CLC_EditSeq), f, "InputBoxTemplate")
   edit:SetAutoFocus(false); edit:SetWidth(200); edit:SetHeight(20)
   edit:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -105)
-  edit:SetFrameLevel(f:GetFrameLevel() + 1)  -- auf Nummer sicher
+  edit:SetFrameLevel(f:GetFrameLevel() + 1)
   local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   lbl:SetPoint("BOTTOMRIGHT", edit, "TOPRIGHT", 0, 2); lbl:SetText("Kommentar")
-  
-   ------------------------------------------------------------
-  -- Countdown-Balken (sichtbar) – 1.12 ohne SetSize
-  ------------------------------------------------------------
-	-- Balken-Grundwerte
-	local barW = f:GetWidth() - 28
-	local barH = 8
 
-	local barBG = f:CreateTexture(nil, "BACKGROUND")
-	barBG:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
-	barBG:SetWidth(barW); barBG:SetHeight(barH)
-	barBG:SetTexture(0, 0, 0); barBG:SetAlpha(0.5)
+  -- Countdown-Balken (1.12)
+  local barW = f:GetWidth() - 28
+  local barH = 8
 
-	local bar = CreateFrame("StatusBar", nil, f)
-	bar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
-	bar:SetWidth(barW); bar:SetHeight(barH)
-	bar:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
-	bar:SetStatusBarColor(0.0, 0.7, 1.0)
-	bar:SetMinMaxValues(0, CLC_DB.lootDuration)
-	bar:SetValue(CLC_DB.lootDuration)
+  local barBG = f:CreateTexture(nil, "BACKGROUND")
+  barBG:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
+  barBG:SetWidth(barW); barBG:SetHeight(barH)
+  barBG:SetTexture(0, 0, 0); barBG:SetAlpha(0.5)
 
-	local timeText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	timeText:SetPoint("CENTER", bar, "CENTER", 0, 0)
-	timeText:SetText(tostring(CLC_DB.lootDuration).."s")
+  local bar = CreateFrame("StatusBar", nil, f)
+  bar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
+  bar:SetWidth(barW); bar:SetHeight(barH)
+  bar:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
+  bar:SetStatusBarColor(0.0, 0.7, 1.0)
+  bar:SetMinMaxValues(0, CLC_DB.lootDuration)
+  bar:SetValue(CLC_DB.lootDuration)
 
-	-- EIN gemeinsames OnUpdate für Balken + Auto-Close (1.12: 'this' & 'arg1')
-	f.key       = key
-	f.bar       = bar
-	f.timeText  = timeText
-	f.timeLeft  = CLC_DB.lootDuration
+  local timeText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  timeText:SetPoint("CENTER", bar, "CENTER", 0, 0)
+  timeText:SetText(tostring(CLC_DB.lootDuration).."s")
 
-	f:SetScript("OnUpdate", function()
-	  this.timeLeft = this.timeLeft - arg1
-	  if this.timeLeft < 0 then this.timeLeft = 0 end
-	  this.bar:SetValue(this.timeLeft)
-	  this.timeText:SetText(tostring(math.floor(this.timeLeft)).."s")
-	  if this.timeLeft <= 0 then
-		CLC_CloseItemWindow(this.key)
-		this:SetScript("OnUpdate", nil)
-	  end
-	end)
+  -- Gemeinsames OnUpdate
+  f.key       = key
+  f.bar       = bar
+  f.timeText  = timeText
+  f.timeLeft  = CLC_DB.lootDuration
+  f:SetScript("OnUpdate", function()
+    this.timeLeft = this.timeLeft - arg1
+    if this.timeLeft < 0 then this.timeLeft = 0 end
+    this.bar:SetValue(this.timeLeft)
+    this.timeText:SetText(tostring(math.floor(this.timeLeft)).."s")
+    if this.timeLeft <= 0 then
+      CLC_CloseItemWindow(this.key)
+      this:SetScript("OnUpdate", nil)
+    end
+  end)
 
   local function chooseAndClose(choice, roll, doRollChatMin, doRollChatMax)
     CLC_SendResponse(key, choice, edit:GetText(), roll)
@@ -592,15 +564,15 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
   bOS:SetScript("OnClick",  function() chooseAndClose("OS") end)
 
   bTM:SetScript("OnClick", function()
-    local comment = edit:GetText()
-    CLC_EnqueuePendingRoll(key, "TMOG", edit:GetText(), 1, 10)
-    RandomRoll(1,10)           -- lässt die echte Server-Roll im Chat erscheinen
-    CLC_CloseItemWindow(key)   -- Fenster schließen; RESPONSE kommt nach dem Chat-Event
+    CLC_PendingRollQueues["1-10"] = CLC_PendingRollQueues["1-10"] or {}
+    table.insert(CLC_PendingRollQueues["1-10"], { key=key, choice="TMOG", comment=edit:GetText() or "" })
+    RandomRoll(1,10)
+    CLC_CloseItemWindow(key)
   end)
 
   bRoll:SetScript("OnClick", function()
-    local comment = edit:GetText()
-    CLC_EnqueuePendingRoll(key, "ROLL", edit:GetText(), 1, 100)
+    CLC_PendingRollQueues["1-100"] = CLC_PendingRollQueues["1-100"] or {}
+    table.insert(CLC_PendingRollQueues["1-100"], { key=key, choice="ROLL", comment=edit:GetText() or "" })
     RandomRoll(1,100)
     CLC_CloseItemWindow(key)
   end)
@@ -614,11 +586,11 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
 end
 
 ------------------------------------------------------------
--- Officer-Panel (schmal, Header ausgerichtet, dynamische Höhe, Votes)
+-- Officer-Panel (schmal, Header, dynamische Höhe, Votes)
 ------------------------------------------------------------
 local CLC_OfficerFrame = nil
 local CLC_RowFrames = nil
-local CLC_MAX_ROWS = 40 -- bis zu 40 Zeilen auf einmal (groß, aber gewünscht)
+local CLC_MAX_ROWS = 40
 local ROW_H = 18
 local TOP_PAD = 64
 local BOT_PAD = 48
@@ -649,7 +621,6 @@ local function filterTopRolls(rows)
       if not maxROLL or (r.roll or 0) > maxROLL then maxROLL = r.roll or 0 end
     end
   end
-  -- Wenn es in der Kategorie niemanden gab, NICHT filtern.
   if not sawTMOG and not sawROLL then return rows end
 
   local out = {}
@@ -672,7 +643,6 @@ local function CLC_SortResponsesFor(itemKey)
     local sa = CLC_SortOrder(a.choice)
     local sb = CLC_SortOrder(b.choice)
     if sa ~= sb then return sa < sb end
-    -- Bei gleicher Kategorie: für TMOG/ROLL nach roll absteigend
     if a.choice=="TMOG" or a.choice=="ROLL" then
       local ra = tonumber(a.roll or 0) or 0
       local rb = tonumber(b.roll or 0) or 0
@@ -693,16 +663,15 @@ local function CLC_GetVoters(itemKey, target)
   return out
 end
 
-
 function CLC_RefreshOfficerList()
   if not CLC_OfficerFrame then return end
   local idx = CLC_OfficerIndex
   local key = CLC_Items[idx]
-  -- Höhe nach Zeilenzahl dynamisch setzen
+
   local function setHeightFor(n)
     local h = TOP_PAD + (n * ROW_H) + BOT_PAD
     if h < 180 then h = 180 end
-    if h > 800 then h = 800 end -- Hardcap sinnvoll
+    if h > 800 then h = 800 end
     CLC_OfficerFrame:SetHeight(h)
   end
 
@@ -714,7 +683,6 @@ function CLC_RefreshOfficerList()
   end
   CLC_OfficerFrame.title:SetText(CLC_ItemTextFromLink(key))
 
-  -- Rows vorbereiten, PASS raus, sortieren, Top-Rolls filtern
   local rows = {}
   local src = CLC_Responses[key] or {}
   local i
@@ -722,7 +690,6 @@ function CLC_RefreshOfficerList()
   CLC_SortResponsesFor(key)
   rows = filterTopRolls(rows)
 
-  -- befüllen
   local count = tlen(rows)
   setHeightFor(count)
   for i=1, CLC_MAX_ROWS do
@@ -734,11 +701,7 @@ function CLC_RefreshOfficerList()
       if (r.choice == "TMOG" or r.choice == "ROLL") and (r.roll or 0) > 0 then
         choiceTxt = choiceTxt.." ("..tostring(r.roll)..")"
       end
-      local choiceTxt = r.choice or "?"
-	  if (r.choice == "TMOG" or r.choice == "ROLL") and (r.roll or 0) > 0 then
-		choiceTxt = choiceTxt.." ("..tostring(r.roll)..")"
-	  end
-	  rf.choiceFS:SetText(choiceTxt)
+      rf.choiceFS:SetText(choiceTxt)
       rf.rankFS:SetText(getDisplayRank(r.name or ""))
       rf.commentFS:SetText(r.comment or "")
       local voted = CLC_HasVoted(key, playerName(), r.name or "")
@@ -766,11 +729,10 @@ function CLC_ShowOfficerPanel()
     f:SetClampedToScreen(true)
     RestorePos(f, "officer", "CENTER", "CENTER", 0, 0)
 
-    -- Titel
     local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
     title:SetPoint("TOP", f, "TOP", 0, -12); title:SetText("Item"); f.title = title
 
-    -- NEU: Navigationspfeile
+    -- Navigationspfeile
     local prev = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     prev:SetText("<"); prev:SetWidth(22); prev:SetHeight(20)
     prev:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -12)
@@ -790,7 +752,7 @@ function CLC_ShowOfficerPanel()
       CLC_RefreshOfficerList()
     end)
 
-    -- Spaltenbreiten (schmaler)
+    -- Spaltenbreiten
     local X0 = 20
     local W_NAME   = 120
     local W_CHOICE = 60
@@ -800,7 +762,7 @@ function CLC_ShowOfficerPanel()
     local W_COUNT  = 35
     local GAP = 6
 
-    -- Header exakt ausrichten
+    -- Header
     local hName   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hName:SetPoint("TOPLEFT", f, "TOPLEFT", X0, -40); hName:SetWidth(W_NAME);   hName:SetJustifyH("LEFT"); hName:SetText("Name")
     local hChoice = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hChoice:SetPoint("LEFT", hName, "RIGHT", GAP, 0);   hChoice:SetWidth(W_CHOICE); hChoice:SetText("Auswahl")
     local hRank   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hRank:SetPoint("LEFT", hChoice, "RIGHT", GAP, 0);   hRank:SetWidth(W_RANK);   hRank:SetText("Rang")
@@ -825,7 +787,7 @@ function CLC_ShowOfficerPanel()
       voteBtn:SetWidth(W_VOTE); voteBtn:SetHeight(18)
       voteBtn:SetPoint("LEFT", commentFS, "RIGHT", GAP, 0); voteBtn:SetText("Vote")
 
-       -- Count-Hitbox (damit OnEnter/Leave geht – FontStrings können das nicht)
+      -- Count mit Tooltip
       local countBtn = CreateFrame("Button", nil, row)
       countBtn:SetWidth(W_COUNT); countBtn:SetHeight(18)
       countBtn:SetPoint("LEFT", voteBtn, "RIGHT", GAP, 0)
@@ -834,7 +796,6 @@ function CLC_ShowOfficerPanel()
       countFS:SetPoint("CENTER", countBtn, "CENTER", 0, 0)
       countFS:SetWidth(W_COUNT)
 
-      -- Tooltip-Verhalten
       countBtn:SetScript("OnEnter", function()
         local idx = CLC_OfficerIndex
         local key = CLC_Items[idx]
@@ -845,9 +806,7 @@ function CLC_ShowOfficerPanel()
         GameTooltip:AddLine("Votes: "..tostring(table.getn(voters)), 1,1,1)
         if table.getn(voters) > 0 then
           local i
-          for i=1, table.getn(voters) do
-            GameTooltip:AddLine(voters[i], 0.9,0.9,0.9)
-          end
+          for i=1, table.getn(voters) do GameTooltip:AddLine(voters[i], 0.9,0.9,0.9) end
         else
           GameTooltip:AddLine("Keine", 0.7,0.7,0.7)
         end
@@ -855,11 +814,10 @@ function CLC_ShowOfficerPanel()
       end)
       countBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-      row.nameFS=nameFS; row.choiceFS=choiceFS; row.rankFS=rankFS; row.commentFS=commentFS; row.voteBtn=voteBtn; row.countFS=countFS; row.countBtn = countBtn; row.countFS  = countFS
+      row.nameFS=nameFS; row.choiceFS=choiceFS; row.rankFS=rankFS; row.commentFS=commentFS; row.voteBtn=voteBtn; row.countFS=countFS; row.countBtn=countBtn
       row:Hide(); CLC_RowFrames[i]=row
     end
 
-    -- Close unten rechts
     local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     close:SetText("Schließen"); close:SetWidth(90); close:SetHeight(22)
     close:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 16)
@@ -867,7 +825,6 @@ function CLC_ShowOfficerPanel()
 
     f:Hide(); CLC_OfficerFrame = f
   end
-
   CLC_RefreshOfficerList()
   CLC_OfficerFrame:Show()
 end
@@ -877,7 +834,7 @@ end
 ------------------------------------------------------------
 local CLC_MLFrame = nil
 function CLC_ShowMLFrame()
-  if not CLC_IsMasterLooter then return end
+  if not CanPlayerTriggerLoot() then return end
   if not CLC_MLFrame then
     local f = CreateFrame("Frame", "CLC_MLFrame", UIParent)
     f:SetWidth(180); f:SetHeight(60); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
@@ -903,7 +860,7 @@ local function CLC_HideMLFrame() if CLC_MLFrame then CLC_MLFrame:Hide() end end
 ------------------------------------------------------------
 local function CLC_OnMessage(sender, message)
   if not message then return end
-  local tag, payload = string.match(message, "([^% ^]+)%^(.*)")
+  local tag, payload = SMATCH(message, "([^% ^]+)%^(.*)")
   if not tag then return end
 
   if tag == "SESSION_START" then
@@ -917,7 +874,7 @@ local function CLC_OnMessage(sender, message)
     CLC_HideMLFrame()
 
   elseif tag == "ITEM" then
-    local lnk, icon = string.match(payload, "(.+)%^(.*)")
+    local lnk, icon = SMATCH(payload, "(.+)%^(.*)")
     if lnk then
       local key = itemKeyFromLink(lnk)
       table.insert(CLC_Items, key)
@@ -928,25 +885,25 @@ local function CLC_OnMessage(sender, message)
 
   elseif tag == "RESPONSE" then
     -- payload: key ^ name ^ choice ^ comment ^ roll
-    local key, name, choice, comment, roll = string.match(payload, "([^\^]+)%^([^\^]+)%^([^\^]+)%^([^\^]*)%^(.*)")
+    local key, name, choice, comment, roll = SMATCH(payload, "([^\^]+)%^([^\^]+)%^([^\^]+)%^([^\^]*)%^(.*)")
     if not key or not name or not choice then return end
-    local nroll = tonumber(roll or 0) or 0   -- <— NEU: numerisch
+    local nroll = tonumber(roll or 0) or 0
     CLC_Responses[key] = CLC_Responses[key] or {}
     local list = CLC_Responses[key]
     local i, found=1,false
     for i=1, tlen(list) do
       if list[i].name == name then
-        list[i].choice, list[i].comment, list[i].rank, list[i].roll = choice, comment, getDisplayRank(name), nroll  -- <— NEU
+        list[i].choice, list[i].comment, list[i].roll = choice, comment, nroll
         found=true; break
       end
     end
     if not found then
-      table.insert(list, { name=name, choice=choice, comment=comment, rank=getDisplayRank(name), roll=nroll })       -- <— NEU
+      table.insert(list, { name=name, choice=choice, comment=comment, roll=nroll })
     end
     if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end
 
   elseif tag == "VOTE" then
-    local key, voter, target = string.match(payload, "([^\^]+)%^([^\^]+)%^(.*)")
+    local key, voter, target = SMATCH(payload, "([^\^]+)%^([^\^]+)%^(.*)")
     if key and voter and target then
       CLC_Votes[key] = CLC_Votes[key] or {}; CLC_Votes[key][voter] = CLC_Votes[key][voter] or {}
       CLC_Votes[key][voter][target] = true
@@ -954,25 +911,27 @@ local function CLC_OnMessage(sender, message)
     end
 
   elseif tag == "VOTE_REVOKE" then
-    local key, voter, target = string.match(payload, "([^\^]+)%^([^\^]+)%^(.*)")
+    local key, voter, target = SMATCH(payload, "([^\^]+)%^([^\^]+)%^(.*)")
     if key and voter and target and CLC_Votes[key] and CLC_Votes[key][voter] then
       CLC_Votes[key][voter][target] = nil
       if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end
     end
+
   elseif tag == "ZONES_SET" then
-  if CLC_DB.meta.acceptZonePush then
-    CLC_ApplyZonesFromString(payload)
-    CLC_InAllowedZone = inAllowedZone()
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist aktualisiert: "..(payload ~= "" and payload or "(leer)"))
-  else
-    -- ignoriert – Nutzer will keine Pushes
-    -- (optional hier eine kurze Info anzeigen)
-  end
-  
+    if CLC_DB.meta.acceptZonePush then
+      -- einfache Serialisierung: "Zone1;Zone2;..."
+      CLC_DB.zones = {}
+      if payload and payload ~= "" then
+        local z
+        for z in string.gfind(payload, "([^;]+)") do CLC_DB.zones[z] = true end
+      end
+      CLC_InAllowedZone = inAllowedZone()
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist aktualisiert: "..(payload ~= "" and payload or "(leer)"))
+    end
   end
 end
 
--- Vote Toggle (mit Chat-Ausgabe; sicher formatiert)
+-- Vote Toggle
 function CLC_ToggleVote(itemKey, target)
   local voter = playerName()
   if not itemKey then itemKey = "?" end
@@ -996,62 +955,76 @@ end
 ------------------------------------------------------------
 -- Slash Commands
 ------------------------------------------------------------
+local function CLC_SerializeZones()
+  local t = {}
+  local k,v
+  for k,v in pairs(CLC_DB.zones or {}) do
+    if v then table.insert(t, k) end
+  end
+  table.sort(t)
+  return table.concat(t, ";")
+end
+
 SLASH_CLC1 = "/clc"
 SlashCmdList["CLC"] = function(msg)
   local cmd = string.lower(msg or "")
   if cmd == "show" then
     CLC_ShowOfficerPanel()
+
   elseif cmd == "end" then
-    if CLC_IsMasterLooter then endSession() end
+    if CanPlayerTriggerLoot() then endSession() end
+
   elseif cmd == "anchor" then
     EnsureAnchor()
     if CLC_AnchorFrame:IsShown() then HideAnchor(); DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: Loot-Anker versteckt.")
     else ShowAnchor(); DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: Loot-Anker anzeigen (ziehen, um zu verschieben).") end
+
   elseif cmd == "anchor reset" then
     ResetAnchor(); DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: Loot-Anker zurückgesetzt.")
+
   elseif string.sub(cmd,1,9) == "zone add " then
-  local z = string.sub(cmd, 10)
-  if z and z ~= "" then
-    CLC_DB.zones[z] = true
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zone hinzugefügt: "..z)
-  end
+    local z = string.sub(cmd, 10)
+    if z and z ~= "" then
+      CLC_DB.zones[z] = true
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zone hinzugefügt: "..z)
+    end
 
-elseif string.sub(cmd,1,12) == "zone remove " then
-  local z = string.sub(cmd, 13)
-  if z and z ~= "" then
-    CLC_DB.zones[z] = nil
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zone entfernt: "..z)
-  end
+  elseif string.sub(cmd,1,12) == "zone remove " then
+    local z = string.sub(cmd, 13)
+    if z and z ~= "" then
+      CLC_DB.zones[z] = nil
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zone entfernt: "..z)
+    end
 
-elseif cmd == "zone list" then
-  local s = CLC_SerializeZones()
-  DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r Zonen-Whitelist: "..(s ~= "" and s or "(leer)"))
+  elseif cmd == "zone list" then
+    local s = CLC_SerializeZones()
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r Zonen-Whitelist: "..(s ~= "" and s or "(leer)"))
 
-elseif cmd == "zone reset" then
-  CLC_DB.zones = {}
-  DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist geleert.")
+  elseif cmd == "zone reset" then
+    CLC_DB.zones = {}
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist geleert.")
 
-elseif string.sub(cmd,1,12) == "zones accept" then
-  local arg = string.lower(string.sub(cmd,14) or "")
-  if arg == "on" or arg == "1" or arg == "true" then
-    CLC_DB.meta.acceptZonePush = true
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Push akzeptieren: |cff00ff00AN|r")
-  elseif arg == "off" or arg == "0" or arg == "false" then
-    CLC_DB.meta.acceptZonePush = false
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Push akzeptieren: |cffff0000AUS|r")
-  else
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: /clc zones accept on|off")
-  end
+  elseif string.sub(cmd,1,12) == "zones accept" then
+    local arg = string.lower(string.sub(cmd,14) or "")
+    if arg == "on" or arg == "1" or arg == "true" then
+      CLC_DB.meta.acceptZonePush = true
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Push akzeptieren: |cff00ff00AN|r")
+    elseif arg == "off" or arg == "0" or arg == "false" then
+      CLC_DB.meta.acceptZonePush = false
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Push akzeptieren: |cffff0000AUS|r")
+    else
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: /clc zones accept on|off")
+    end
 
-elseif cmd == "zones push" then
-  -- nur RL/RA/ML (du kannst die Bedingung anpassen)
-  if not IsRaidLeader() and not IsRaidOfficer() and not CLC_IsMasterLooter then
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Nur RL/RA/ML dürfen pushen.")
-  else
-    local payload = CLC_SerializeZones()
-    CLC_Send("ZONES_SET", payload)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist an Raid gepusht.")
-  end
+  elseif cmd == "zones push" then
+    if not (IsRaidLeader() or IsRaidOfficer() or CanPlayerTriggerLoot()) then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Nur RL/RA/ML dürfen pushen.")
+    else
+      local payload = CLC_SerializeZones()
+      CLC_Send("ZONES_SET", payload)
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00CLC|r: Zonen-Whitelist an Raid gepusht.")
+    end
+
   else
     DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: /clc show  |  /clc end  |  /clc anchor  |  /clc anchor reset")
   end
@@ -1063,19 +1036,18 @@ end
 function CLC_OnEvent()
   if event == "VARIABLES_LOADED" or event == "PLAYER_LOGIN" then
     CLC_EnsureDB()
-    CLC_IsRaid = isRaid(); CLC_InAllowedZone = inAllowedZone(); updateMasterLooter(); refreshGuildRoster(); EnsureAnchor()
+    CLC_IsRaid = isRaid(); CLC_InAllowedZone = inAllowedZone(); refreshGuildRoster()
 
   elseif event == "PLAYER_ENTERING_WORLD" or event == "RAID_ROSTER_UPDATE" then
-    CLC_IsRaid = isRaid(); CLC_InAllowedZone = inAllowedZone(); updateMasterLooter(); refreshGuildRoster()
+    CLC_IsRaid = isRaid(); CLC_InAllowedZone = inAllowedZone(); refreshGuildRoster()
 
   elseif event == "PLAYER_LOOT_METHOD_CHANGED" then
-    updateMasterLooter()
+    -- nichts nötig, CanPlayerTriggerLoot() prüft live
 
   elseif event == "LOOT_OPENED" then
-  -- Zone NICHT vorab filtern; die Logik passiert in CLC_BroadcastLoot()
-  if not CLC_SessionActive then
-    CLC_BroadcastLoot()
-  end
+    if not CLC_SessionActive then
+      CLC_BroadcastLoot()
+    end
 
   elseif event == "GUILD_ROSTER_UPDATE" then
     if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end
@@ -1083,37 +1055,26 @@ function CLC_OnEvent()
   elseif event == "CHAT_MSG_ADDON" then
     local prefix, message, channel, sender = arg1, arg2, arg3, arg4
     if prefix == "CLC" then CLC_OnMessage(sender, message) end
-	
+
   elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" or event == "ZONE_CHANGED_NEW_AREA" then
     CLC_InAllowedZone = inAllowedZone()
-	
+
   elseif event == "CHAT_MSG_SYSTEM" then
-	  local msg = arg1
-	  if not msg then return end
+    local msg = arg1
+    if not msg then return end
+    local who, rollStr, minStr, maxStr = SMATCH(msg, "^([^%s]+).-(%d+)%s*%((%d+)%-(%d+)%)")
+    if not who or not rollStr or not minStr or not maxStr then return end
+    if who ~= playerName() then return end
 
-	  -- Robust & sprachunabhängig:
-	  --  Name (ohne Leerzeichen) … <Roll> (<Min>-<Max>)
-	  --  Beispiele:
-	  --   "Velaria würfelt. Ergebnis: 57 (1-100)"
-	  --   "Velaria rolls 57 (1-100)"
-	  --   "Velaria lance les dés : 57 (1-100)"
-	  local who, rollStr, minStr, maxStr = string.match(msg, "^([^%s]+).-(%d+)%s*%((%d+)%-(%d+)%)")
-	  if not who or not rollStr or not minStr or not maxStr then return end
-	  if who ~= playerName() then return end  -- nur eigene Klicks interessieren uns
+    local mn = tonumber(minStr) or 0
+    local mx = tonumber(maxStr) or 0
+    local k  = tostring(mn).."-"..tostring(mx)
+    local q = CLC_PendingRollQueues and CLC_PendingRollQueues[k]
+    if not q or table.getn(q) == 0 then return end
 
-	  local mn = tonumber(minStr) or 0
-	  local mx = tonumber(maxStr) or 0
-	  local k  = tostring(mn).."-"..tostring(mx)
-
-	  local q = CLC_PendingRollQueues and CLC_PendingRollQueues[k]
-	  if not q or table.getn(q) == 0 then return end
-
-	  -- Erstes Pending dieses Bereichs bedienen (FIFO)
-	  local entry = table.remove(q, 1)
-	  local rnum  = tonumber(rollStr) or 0
-
-	  -- Jetzt erst die RESPONSE senden – mit echtem(!) Chat-Roll
-	  CLC_Send("RESPONSE", entry.key.."^"..playerName().."^"..entry.choice.."^"..entry.comment.."^"..tostring(rnum))
+    local entry = table.remove(q, 1)
+    local rnum  = tonumber(rollStr) or 0
+    CLC_Send("RESPONSE", entry.key.."^"..playerName().."^"..entry.choice.."^"..entry.comment.."^"..tostring(rnum))
   end
 end
 frame:SetScript("OnEvent", CLC_OnEvent)
