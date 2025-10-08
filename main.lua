@@ -177,8 +177,8 @@ local function hasZoneWhitelist()
 end
 
 local function raidHasEnoughPlayers()
-  if not IsInRaid() then return false end
-  local n = GetNumRaidMembers()
+  -- In 1.12 gibt es kein IsInRaid(), daher nutzen wir GetNumRaidMembers()
+  local n = GetNumRaidMembers() or 0
   return n >= MIN_RAID_SIZE
 end
 
