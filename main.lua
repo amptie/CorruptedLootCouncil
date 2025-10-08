@@ -3,6 +3,10 @@
 ------------------------------------------------------------
 -- SavedVariables / Defaults
 ------------------------------------------------------------
+local CLC_ITEM_RARITY_DECLARATION = 4
+-- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
+local MIN_RAID_SIZE = 15
+
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
   zones = {
@@ -170,6 +174,12 @@ local function hasZoneWhitelist()
     if v then return true end
   end
   return false
+end
+
+local function raidHasEnoughPlayers()
+  if not IsInRaid() then return false end
+  local n = GetNumRaidMembers()
+  return n >= MIN_RAID_SIZE
 end
 
 -- Whitelist-Logik: leer => überall erlaubt, sonst nur erlaubte Zonen
@@ -354,7 +364,7 @@ local function isEpicOrWhitelisted(slot)
   local texture, name, qty, quality = GetLootSlotInfo(slot)
   if not name then return false end
   if CLC_DB.itemWhitelist[name] then return true end
-  if quality and quality >= 4 then return true end
+  if quality and quality >= CLC_ITEM_RARITY_DECLARATION then return true end
   return false
 end
 
@@ -389,6 +399,7 @@ local function collectQualifyingLoot()
 end
 
 function CLC_BroadcastLoot()
+  if not raidHasEnoughPlayers() then return end
   if CLC_SessionActive then return end
   if not CLC_IsRaid then return end
   if not CanPlayerTriggerLoot() then return end
