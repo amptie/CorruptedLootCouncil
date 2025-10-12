@@ -30,6 +30,8 @@ CLC_DB = CLC_DB or {
   ["Emerald Drake"] = true,
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
+  -- TESTING
+  --["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
@@ -499,10 +501,6 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
   f:SetScript("OnDragStop",  function() this:StopMovingOrSizing() end)
   f:SetClampedToScreen(true)
 
-  local icon = f:CreateTexture(nil, "ARTWORK"); icon:SetTexture(iconTex or "Interface\\Icons\\INV_Misc_QuestionMark")
-  icon:SetTexCoord(0.06,0.94,0.06,0.94); icon:SetWidth(32); icon:SetHeight(32); icon:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
-
-  local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); fs:SetPoint("LEFT", icon, "RIGHT", 8, 0); fs:SetText(itemLink)
 
   -- Buttons kompakt in 2 Reihen
   local function mkBtn(label, x, y, w)
@@ -525,6 +523,42 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
   edit:SetFrameLevel(f:GetFrameLevel() + 1)
   local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   lbl:SetPoint("BOTTOMRIGHT", edit, "TOPRIGHT", 0, 2); lbl:SetText("Kommentar")
+
+	------------- TOOLTIP -----------------
+	 -- Icon-Button statt separatem Texture
+	local iconButton = CreateFrame("Button", nil, f)
+	iconButton:SetWidth(30)
+	iconButton:SetHeight(30)
+	iconButton:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+
+	-- Texture für Icon
+	local tex = iconButton:CreateTexture(nil, "BACKGROUND")
+	tex:SetAllPoints(iconButton)
+	tex:SetTexture(iconTex or "Interface\\Icons\\INV_Misc_QuestionMark")
+	tex:SetTexCoord(0.06, 0.94, 0.06, 0.94)
+
+	-- Mouseover Tooltip
+	iconButton.itemLink = itemLink
+	iconButton:SetScript("OnEnter", function()
+		if not this.itemLink then return end
+		GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
+		if string.match(this.itemLink, "|Hitem:%d+:") then
+			GameTooltip:SetHyperlink(this.itemLink)
+		else
+			local name = string.match(this.itemLink, "%[([^%]]+)%]") or "Unknown Item"
+			GameTooltip:SetText(name)
+		end
+		GameTooltip:Show()
+	end)
+	iconButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+
+	-- Item-Link FontString neben Icon
+	local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	fs:SetPoint("LEFT", iconButton, "RIGHT", 8, 0)
+	fs:SetText(itemLink)
+
 
   -- Countdown-Balken (1.12)
   local barW = f:GetWidth() - 28
