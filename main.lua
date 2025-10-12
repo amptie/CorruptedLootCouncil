@@ -5,7 +5,7 @@
 ------------------------------------------------------------
 local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 2
+local MIN_RAID_SIZE = 15
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -31,7 +31,7 @@ CLC_DB = CLC_DB or {
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
   -- TESTING
-  ["Wool Cloth"] = true,
+  --["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
