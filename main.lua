@@ -5,7 +5,7 @@
 ------------------------------------------------------------
 local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 15
+local MIN_RAID_SIZE = 2
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -31,7 +31,7 @@ CLC_DB = CLC_DB or {
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
   -- TESTING
-  --["Wool Cloth"] = true,
+  ["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
@@ -435,6 +435,40 @@ function CLC_BroadcastLoot()
   end
 end
 
+function CLC_UpdateAnnouncedRow(playerName, choice)
+    if not CLC_RowFrames then return end
+    -- alte grün markierte Zeile zurücksetzen
+    if CLC_LastAnnouncedRow then
+        local row = CLC_LastAnnouncedRow
+        row:SetBackdropColor(0,0,0,0)
+        row.nameFS:SetTextColor(1,1,1)
+        row.choiceFS:SetTextColor(1,1,1)
+        row.rankFS:SetTextColor(1,1,1)
+        row.commentFS:SetTextColor(1,1,1)
+    end
+
+    for _, row in ipairs(CLC_RowFrames) do
+        local rowName = row.nameFS:GetText() or ""
+        local rowChoice = row.choiceFS:GetText() or ""
+
+        -- Extrahiere nur den reinen Choice-Text (vor Klammern)
+        local pureChoice = string.match(rowChoice, "^[^(]+") or rowChoice
+        pureChoice = pureChoice:gsub("%s+$","") -- trim
+
+        local cleanChoice = choice:gsub("%s+$","") -- trim Announce-Choice
+
+        if rowName == playerName and pureChoice == cleanChoice then
+            row:SetBackdropColor(0,0.6,0,0.5)  -- grün
+            row.nameFS:SetTextColor(1,1,1)
+            row.choiceFS:SetTextColor(1,1,1)
+            row.rankFS:SetTextColor(1,1,1)
+            row.commentFS:SetTextColor(1,1,1)
+            CLC_LastAnnouncedRow = row
+            break
+        end
+    end
+end
+
 ------------------------------------------------------------
 -- Loot-Anker
 ------------------------------------------------------------
@@ -708,170 +742,267 @@ local function CLC_GetVoters(itemKey, target)
   return out
 end
 
+------------------------------------------------------------
+-- Refresh Officer Panel
+------------------------------------------------------------
 function CLC_RefreshOfficerList()
-  if not CLC_OfficerFrame then return end
-  local idx = CLC_OfficerIndex
-  local key = CLC_Items[idx]
+    if not CLC_OfficerFrame then return end
+    local idx = CLC_OfficerIndex
+    local key = CLC_Items[idx]
 
-  local function setHeightFor(n)
-    local h = TOP_PAD + (n * ROW_H) + BOT_PAD
-    if h < 180 then h = 180 end
-    if h > 800 then h = 800 end
-    CLC_OfficerFrame:SetHeight(h)
-  end
-
-  if not key then
-    CLC_OfficerFrame.title:SetText("Keine Items")
-    local i; for i=1, CLC_MAX_ROWS do CLC_RowFrames[i]:Hide() end
-    setHeightFor(0)
-    return
-  end
-  CLC_OfficerFrame.title:SetText(CLC_ItemTextFromLink(key))
-
-  local rows = {}
-  local src = CLC_Responses[key] or {}
-  local i
-  for i=1, tlen(src) do local r=src[i]; if r.choice ~= "PASS" then table.insert(rows, r) end end
-  CLC_SortResponsesFor(key)
-  rows = filterTopRolls(rows)
-
-  local count = tlen(rows)
-  setHeightFor(count)
-  for i=1, CLC_MAX_ROWS do
-    local rf = CLC_RowFrames[i]
-    local r = rows[i]
-    if r then
-      rf.nameFS:SetText(r.name or "?")
-      local choiceTxt = r.choice or "?"
-      if (r.choice == "TMOG" or r.choice == "ROLL") and (r.roll or 0) > 0 then
-        choiceTxt = choiceTxt.." ("..tostring(r.roll)..")"
-      end
-      rf.choiceFS:SetText(choiceTxt)
-      rf.rankFS:SetText(getDisplayRank(r.name or ""))
-      rf.commentFS:SetText(r.comment or "")
-      local voted = CLC_HasVoted(key, playerName(), r.name or "")
-      rf.voteBtn:SetText(voted and "Unvote" or "Vote")
-      rf.voteBtn:SetScript("OnClick", function()
-        CLC_ToggleVote(key, r.name or "")
-        CLC_RefreshOfficerList()
-      end)
-      rf.countFS:SetText(tostring(CLC_VoteCount(key, r.name or "")))
-      rf:Show()
-    else
-      rf:Hide()
+    -- Höhe des Panels anpassen
+    local function setHeightFor(n)
+        local h = TOP_PAD + (n * ROW_H) + BOT_PAD
+        if h < 180 then h = 180 end
+        if h > 800 then h = 800 end
+        CLC_OfficerFrame:SetHeight(h)
     end
-  end
+
+    -- Kein Item vorhanden
+    if not key then
+        CLC_OfficerFrame.title:SetText("Keine Items")
+        for i=1, CLC_MAX_ROWS do
+            CLC_RowFrames[i]:Hide()
+        end
+        setHeightFor(0)
+        return
+    end
+
+    CLC_OfficerFrame.title:SetText(CLC_ItemTextFromLink(key))
+
+    -- Rows vorbereiten
+    local rows = {}
+    local src = CLC_Responses[key] or {}
+    for i=1, tlen(src) do
+        local r = src[i]
+        if r.choice ~= "PASS" then table.insert(rows, r) end
+    end
+
+    CLC_SortResponsesFor(key)
+    rows = filterTopRolls(rows)
+
+    local count = tlen(rows)
+    setHeightFor(count)
+
+    for i=1, CLC_MAX_ROWS do
+        local rf = CLC_RowFrames[i]
+        local r = rows[i]
+
+        if rf then
+            if r then
+                -- FontStrings setzen
+                rf.nameFS:SetText(r.name or "?")
+                local choiceTxt = tostring(r.choice or "?")
+                if (r.choice == "TMOG" or r.choice == "ROLL") and (r.roll or 0) > 0 then
+                    choiceTxt = choiceTxt.." ("..tostring(r.roll)..")"
+                end
+                rf.choiceFS:SetText(choiceTxt)
+                rf.rankFS:SetText(getDisplayRank(r.name or ""))
+                rf.commentFS:SetText(r.comment or "")
+
+                -- Vote Button
+                local voted = CLC_HasVoted(key, playerName(), r.name or "")
+                rf.voteBtn:SetText(voted and "Unvote" or "Vote")
+                rf.voteBtn:SetScript("OnClick", function()
+                    CLC_ToggleVote(key, r.name or "")
+                    CLC_RefreshOfficerList()
+                end)
+
+                -- Vote Count
+                rf.countFS:SetText(tostring(CLC_VoteCount(key, r.name or "")))
+
+                -- Zeile anzeigen
+                rf:Show()
+
+                -- -------------- ANOUNCE MARKIERUNG -----------------
+                local rowPlayer = r.name or ""
+                local rowChoice = tostring(r.choice or "")
+                rowChoice = string.gsub(rowChoice, "%s*%(.+%)", "") -- Roll entfernen
+                rowChoice = string.gsub(rowChoice, "^%s*(.-)%s*$","%1") -- trim whitespace
+
+                if CLC_AnnouncedRowData
+                   and CLC_AnnouncedRowData.playerName == rowPlayer
+                   and CLC_AnnouncedRowData.choice == rowChoice then
+                    rf:SetBackdropColor(0,0,0,0)  -- grün
+                    rf.nameFS:SetTextColor(0,0.6,0,0.5)
+                    rf.choiceFS:SetTextColor(0,0.6,0,0.5)
+                    rf.rankFS:SetTextColor(0,0.6,0,0.5)
+                    rf.commentFS:SetTextColor(0,0.6,0,0.5)
+                else
+                    rf:SetBackdropColor(0,0,0,0) -- Standardfarbe
+                    rf.nameFS:SetTextColor(1,1,1)
+                    rf.choiceFS:SetTextColor(1,1,1)
+                    rf.rankFS:SetTextColor(1,1,1)
+                    rf.commentFS:SetTextColor(1,1,1)
+                end
+
+            else
+                rf:Hide()
+            end
+        end
+    end
 end
 
+------------------------------------------------------------
+-- Show Officer Panel
+------------------------------------------------------------
 function CLC_ShowOfficerPanel()
-  if not isCouncil(playerName()) then return end
-  if not CLC_OfficerFrame then
-    local f = CreateFrame("Frame", "CLC_OfficerFrame", UIParent)
-    f:SetWidth(640); f:SetHeight(260); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
-    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", function() this:StartMoving() end)
-    f:SetScript("OnDragStop",  function() this:StopMovingOrSizing(); SavePos(this, "officer") end)
-    f:SetClampedToScreen(true)
-    RestorePos(f, "officer", "CENTER", "CENTER", 0, 0)
+    if not isCouncil(playerName()) then return end
+    if not CLC_OfficerFrame then
+        local f = CreateFrame("Frame", "CLC_OfficerFrame", UIParent)
+        f:SetWidth(640); f:SetHeight(260); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
+        f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", function() this:StartMoving() end)
+        f:SetScript("OnDragStop", function() this:StopMovingOrSizing(); SavePos(this, "officer") end)
+        f:SetClampedToScreen(true)
+        RestorePos(f, "officer", "CENTER", "CENTER", 0, 0)
 
-    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    title:SetPoint("TOP", f, "TOP", 0, -12); title:SetText("Item"); f.title = title
+        -- Titel
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+        title:SetPoint("TOP", f, "TOP", 0, -12)
+        title:SetText("Item"); f.title = title
 
-    -- Navigationspfeile
-    local prev = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    prev:SetText("<"); prev:SetWidth(22); prev:SetHeight(20)
-    prev:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -12)
-    prev:SetScript("OnClick", function()
-      if tlen(CLC_Items) == 0 then return end
-      CLC_OfficerIndex = CLC_OfficerIndex - 1
-      if CLC_OfficerIndex < 1 then CLC_OfficerIndex = tlen(CLC_Items) end
-      CLC_RefreshOfficerList()
-    end)
-    local nextb = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    nextb:SetText(">"); nextb:SetWidth(22); nextb:SetHeight(20)
-    nextb:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -12)
-    nextb:SetScript("OnClick", function()
-      if tlen(CLC_Items) == 0 then return end
-      CLC_OfficerIndex = CLC_OfficerIndex + 1
-      if CLC_OfficerIndex > tlen(CLC_Items) then CLC_OfficerIndex = 1 end
-      CLC_RefreshOfficerList()
-    end)
+        -- Navigationspfeile
+        local prev = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        prev:SetText("<"); prev:SetWidth(22); prev:SetHeight(20)
+        prev:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -12)
+        prev:SetScript("OnClick", function()
+            if tlen(CLC_Items) == 0 then return end
+            CLC_OfficerIndex = CLC_OfficerIndex - 1
+            if CLC_OfficerIndex < 1 then CLC_OfficerIndex = tlen(CLC_Items) end
+            CLC_RefreshOfficerList()
+        end)
 
-    -- Spaltenbreiten
-    local X0 = 20
-    local W_NAME   = 120
-    local W_CHOICE = 60
-    local W_RANK   = 90
-    local W_COMM   = 230
-    local W_VOTE   = 50
-    local W_COUNT  = 35
-    local GAP = 6
+        local nextb = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        nextb:SetText(">"); nextb:SetWidth(22); nextb:SetHeight(20)
+        nextb:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -12)
+        nextb:SetScript("OnClick", function()
+            if tlen(CLC_Items) == 0 then return end
+            CLC_OfficerIndex = CLC_OfficerIndex + 1
+            if CLC_OfficerIndex > tlen(CLC_Items) then CLC_OfficerIndex = 1 end
+            CLC_RefreshOfficerList()
+        end)
 
-    -- Header
-    local hName   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hName:SetPoint("TOPLEFT", f, "TOPLEFT", X0, -40); hName:SetWidth(W_NAME);   hName:SetJustifyH("LEFT"); hName:SetText("Name")
-    local hChoice = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hChoice:SetPoint("LEFT", hName, "RIGHT", GAP, 0);   hChoice:SetWidth(W_CHOICE); hChoice:SetText("Auswahl")
-    local hRank   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hRank:SetPoint("LEFT", hChoice, "RIGHT", GAP, 0);   hRank:SetWidth(W_RANK);   hRank:SetText("Rang")
-    local hComm   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hComm:SetPoint("LEFT", hRank, "RIGHT", GAP, 0);     hComm:SetWidth(W_COMM);   hComm:SetJustifyH("LEFT"); hComm:SetText("Kommentar")
-    local hVote   = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hVote:SetPoint("LEFT", hComm, "RIGHT", GAP, 0);     hVote:SetWidth(W_VOTE);   hVote:SetText("Vote")
-    local hCount  = f:CreateFontString(nil,"OVERLAY","GameFontNormal"); hCount:SetPoint("LEFT", hVote, "RIGHT", GAP, 0);    hCount:SetWidth(W_COUNT); hCount:SetText("Cnt")
+        -- Spaltenbreiten
+        local X0 = 20
+        local W_NAME, W_CHOICE, W_RANK, W_COMM, W_VOTE, W_COUNT = 120, 60, 90, 230, 50, 35
+        local GAP = 6
 
-    -- Zeilen
-    CLC_RowFrames = {}
-    local i
-    for i=1, CLC_MAX_ROWS do
-      local row = CreateFrame("Frame", nil, f)
-      row:SetWidth(600); row:SetHeight(ROW_H)
-      row:SetPoint("TOPLEFT", hName, "BOTTOMLEFT", 0, -(i-1)*ROW_H)
+        -- Header
+        local hName = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hName:SetPoint("TOPLEFT", f, "TOPLEFT", X0, -40); hName:SetWidth(W_NAME); hName:SetJustifyH("LEFT"); hName:SetText("Name")
+        local hChoice = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hChoice:SetPoint("LEFT", hName, "RIGHT", GAP, 0); hChoice:SetWidth(W_CHOICE); hChoice:SetText("Auswahl")
+        local hRank = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hRank:SetPoint("LEFT", hChoice, "RIGHT", GAP, 0); hRank:SetWidth(W_RANK); hRank:SetText("Rang")
+        local hComm = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hComm:SetPoint("LEFT", hRank, "RIGHT", GAP, 0); hComm:SetWidth(W_COMM); hComm:SetJustifyH("LEFT"); hComm:SetText("Kommentar")
+        local hVote = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hVote:SetPoint("LEFT", hComm, "RIGHT", GAP, 0); hVote:SetWidth(W_VOTE); hVote:SetText("Vote")
+        local hCount = f:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        hCount:SetPoint("LEFT", hVote, "RIGHT", GAP, 0); hCount:SetWidth(W_COUNT); hCount:SetText("Cnt")
 
-      local nameFS   = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); nameFS:SetPoint("LEFT", row, "LEFT", 0, 0);   nameFS:SetWidth(W_NAME);   nameFS:SetJustifyH("LEFT")
-      local choiceFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); choiceFS:SetPoint("LEFT", nameFS, "RIGHT", GAP, 0); choiceFS:SetWidth(W_CHOICE)
-      local rankFS   = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); rankFS:SetPoint("LEFT", choiceFS, "RIGHT", GAP, 0); rankFS:SetWidth(W_RANK)
-      local commentFS= row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall"); commentFS:SetPoint("LEFT", rankFS, "RIGHT", GAP, 0); commentFS:SetWidth(W_COMM); commentFS:SetJustifyH("LEFT")
+        -- Zeilen
+        CLC_RowFrames = {}
+        for i=1, CLC_MAX_ROWS do
+            local row = CreateFrame("Button", nil, f)
+            row:SetWidth(600)
+            row:SetHeight(ROW_H)
+            row:SetPoint("TOPLEFT", hName, "BOTTOMLEFT", 0, -(i-1)*ROW_H)
+            row:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background"})
+            row:SetBackdropColor(0,0,0,0)
 
-      local voteBtn  = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-      voteBtn:SetWidth(W_VOTE); voteBtn:SetHeight(18)
-      voteBtn:SetPoint("LEFT", commentFS, "RIGHT", GAP, 0); voteBtn:SetText("Vote")
+            -- Zeile klickbar nur für PM
+            if CanPlayerTriggerLoot() then
+                row:EnableMouse(true)
+                row:RegisterForClicks("LeftButtonUp")
+                row:SetScript("OnMouseDown", function()
+                    if CLC_SelectedRow and CLC_SelectedRow ~= this then
+                        CLC_SelectedRow:SetBackdropColor(0,0,0,0)
+                        CLC_SelectedRow.nameFS:SetTextColor(1,1,1)
+                        CLC_SelectedRow.choiceFS:SetTextColor(1,1,1)
+                        CLC_SelectedRow.rankFS:SetTextColor(1,1,1)
+                        CLC_SelectedRow.commentFS:SetTextColor(1,1,1)
+                    end
+                    CLC_SelectedRow = this
+                    this:SetBackdropColor(0,0.5,0.5,0.5)
+                    this.nameFS:SetTextColor(1,1,0)
+                    this.choiceFS:SetTextColor(1,1,0)
+                    this.rankFS:SetTextColor(1,1,0)
+                    this.commentFS:SetTextColor(1,1,0)
+                end)
+            else
+                row:EnableMouse(false)
+            end
 
-      -- Count mit Tooltip
-      local countBtn = CreateFrame("Button", nil, row)
-      countBtn:SetWidth(W_COUNT); countBtn:SetHeight(18)
-      countBtn:SetPoint("LEFT", voteBtn, "RIGHT", GAP, 0)
+            local nameFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+            nameFS:SetPoint("LEFT", row, "LEFT", 0, 0); nameFS:SetWidth(W_NAME); nameFS:SetJustifyH("LEFT")
+            local choiceFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+            choiceFS:SetPoint("LEFT", nameFS, "RIGHT", GAP, 0); choiceFS:SetWidth(W_CHOICE)
+            local rankFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+            rankFS:SetPoint("LEFT", choiceFS, "RIGHT", GAP, 0); rankFS:SetWidth(W_RANK)
+            local commentFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+            commentFS:SetPoint("LEFT", rankFS, "RIGHT", GAP, 0); commentFS:SetWidth(W_COMM); commentFS:SetJustifyH("LEFT")
 
-      local countFS  = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-      countFS:SetPoint("CENTER", countBtn, "CENTER", 0, 0)
-      countFS:SetWidth(W_COUNT)
+            local voteBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            voteBtn:SetWidth(W_VOTE); voteBtn:SetHeight(18)
+            voteBtn:SetPoint("LEFT", commentFS, "RIGHT", GAP, 0); voteBtn:SetText("Vote")
 
-      countBtn:SetScript("OnEnter", function()
-        local idx = CLC_OfficerIndex
-        local key = CLC_Items[idx]
-        if not key then return end
-        local target = row.nameFS:GetText() or "?"
-        local voters = CLC_GetVoters(key, target)
-        GameTooltip:SetOwner(this, "ANCHOR_TOPLEFT")
-        GameTooltip:AddLine("Votes: "..tostring(table.getn(voters)), 1,1,1)
-        if table.getn(voters) > 0 then
-          local i
-          for i=1, table.getn(voters) do GameTooltip:AddLine(voters[i], 0.9,0.9,0.9) end
-        else
-          GameTooltip:AddLine("Keine", 0.7,0.7,0.7)
+            local countBtn = CreateFrame("Button", nil, row)
+            countBtn:SetWidth(W_COUNT); countBtn:SetHeight(18)
+            countBtn:SetPoint("LEFT", voteBtn, "RIGHT", GAP, 0)
+            local countFS = row:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+            countFS:SetPoint("CENTER", countBtn, "CENTER", 0, 0); countFS:SetWidth(W_COUNT)
+
+            row.nameFS=nameFS; row.choiceFS=choiceFS; row.rankFS=rankFS; row.commentFS=commentFS; row.voteBtn=voteBtn; row.countFS=countFS; row.countBtn=countBtn
+            row:Hide(); CLC_RowFrames[i]=row
         end
-        GameTooltip:Show()
-      end)
-      countBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-      row.nameFS=nameFS; row.choiceFS=choiceFS; row.rankFS=rankFS; row.commentFS=commentFS; row.voteBtn=voteBtn; row.countFS=countFS; row.countBtn=countBtn
-      row:Hide(); CLC_RowFrames[i]=row
+        -- Announce Button nur für PM
+        local announceButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        announceButton:SetWidth(120); announceButton:SetHeight(22)
+        announceButton:SetPoint("BOTTOM", f, "BOTTOM", 0, 10)
+        announceButton:SetText("Announce")
+        if CanPlayerTriggerLoot() then
+            announceButton:SetScript("OnClick", function()
+                if not CLC_SelectedRow then return end
+                local playerName = CLC_SelectedRow.nameFS:GetText()
+                local itemName   = f.title:GetText()
+                local choiceRaw = CLC_SelectedRow.choiceFS:GetText() or ""
+				local choice = string.gsub(choiceRaw, "%s*%(.+%)", "")  -- Roll entfernen
+
+                -- RaidWarning lokal
+                SendChatMessage(string.format("%s bekommt %s für %s", playerName, itemName, choice), "RAID_WARNING")
+
+                -- Broadcast an alle Offiziere
+                if isRaid() then
+                    SendAddonMessage("CLC_ROW_ANNOUNCE", playerName.."^"..choice, "RAID")
+                else
+                    SendAddonMessage("CLC_ROW_ANNOUNCE", playerName.."^"..choice, "PARTY")
+                end
+
+                -- Speicherung für Refresh
+                CLC_AnnouncedRowData = { playerName = playerName, choice = choice }
+
+                -- Refresh Panel
+                CLC_RefreshOfficerList()
+            end)
+        else
+            announceButton:Hide()
+        end
+
+        -- Close Button
+        local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        close:SetText("Schließen"); close:SetWidth(90); close:SetHeight(22)
+        close:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 16)
+        close:SetScript("OnClick", function() f:Hide() end)
+
+        f:Hide()
+        CLC_OfficerFrame = f
     end
 
-    local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    close:SetText("Schließen"); close:SetWidth(90); close:SetHeight(22)
-    close:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 16)
-    close:SetScript("OnClick", function() f:Hide() end)
-
-    f:Hide(); CLC_OfficerFrame = f
-  end
-  CLC_RefreshOfficerList()
-  CLC_OfficerFrame:Show()
+    CLC_RefreshOfficerList()
+    CLC_OfficerFrame:Show()
 end
 
 ------------------------------------------------------------
@@ -1099,7 +1230,26 @@ function CLC_OnEvent()
 
   elseif event == "CHAT_MSG_ADDON" then
     local prefix, message, channel, sender = arg1, arg2, arg3, arg4
-    if prefix == "CLC" then CLC_OnMessage(sender, message) end
+    if prefix == "CLC" then CLC_OnMessage(sender, message)
+	elseif prefix == "CLC_ROW_ANNOUNCE" then
+		local sepPos = string.find(message, "^", 1, true)
+		local playerName, choice
+		if sepPos then
+			playerName = string.sub(message, 1, sepPos-1)
+			choice = string.sub(message, sepPos+1)
+		else
+			return
+		end
+
+		-- Sicherstellen, dass nichts nil ist
+		if not playerName or not choice then return end
+
+		CLC_AnnouncedRowData = { playerName = playerName, choice = choice }
+
+		if CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then
+			CLC_RefreshOfficerList()
+		end
+	end
 
   elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" or event == "ZONE_CHANGED_NEW_AREA" then
     CLC_InAllowedZone = inAllowedZone()
