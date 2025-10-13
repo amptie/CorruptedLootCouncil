@@ -5,7 +5,7 @@
 ------------------------------------------------------------
 local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 15
+local MIN_RAID_SIZE = 2
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -31,7 +31,7 @@ CLC_DB = CLC_DB or {
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
   -- TESTING
-  --["Wool Cloth"] = true,
+  ["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
@@ -203,7 +203,7 @@ function CLC_EscapeChat(msg)
   if string.len(msg) > 240 then msg = string.sub(msg, 1, 240) end
   return msg
 end
-function CLC_OfficerSay(text) SendChatMessage(CLC_EscapeChat(text), "OFFICER") end
+
 function CLC_ItemTextFromLink(link)
   if not link then return "[]" end
   local name = SMATCH(link, "%[([^%]]+)%]")
@@ -1120,11 +1120,9 @@ function CLC_ToggleVote(itemKey, target)
   if CLC_Votes[itemKey][voter][target] then
     CLC_Votes[itemKey][voter][target] = nil
     CLC_Send("VOTE_REVOKE", itemKey.."^"..voter.."^"..target)
-    CLC_OfficerSay(string.format("%s | %s | Vote für %s zurückgenommen", tostring(voter), tostring(itemText), tostring(target)))
   else
     CLC_Votes[itemKey][voter][target] = true
     CLC_Send("VOTE", itemKey.."^"..voter.."^"..target)
-    CLC_OfficerSay(string.format("%s | %s | Vote für %s", tostring(voter), tostring(itemText), tostring(target)))
   end
 end
 
