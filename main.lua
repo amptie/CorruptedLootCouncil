@@ -374,6 +374,7 @@ local function endSession()
   if CLC_SessionActive then
     CLC_SessionActive = false
     CLC_Send("SESSION_END", playerName())
+    CLC_AnnouncedRowData = nil
   end
 end
 
