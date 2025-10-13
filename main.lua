@@ -374,7 +374,6 @@ local function endSession()
   if CLC_SessionActive then
     CLC_SessionActive = false
     CLC_Send("SESSION_END", playerName())
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: Loot-Session beendet.")
   end
 end
 
@@ -1045,6 +1044,7 @@ local function CLC_OnMessage(sender, message)
 
   elseif tag == "SESSION_END" then
     CLC_SessionActive = false
+	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00"..ADDON.."|r: Loot-Session beendet.")
     local k; for k,_ in pairs(CLC_ItemWindows) do CLC_CloseItemWindow(k) end
     if CLC_OfficerFrame then CLC_OfficerFrame:Hide() end
     CLC_HideMLFrame()
