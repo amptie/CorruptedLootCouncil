@@ -5,7 +5,7 @@
 ------------------------------------------------------------
 local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 15
+local MIN_RAID_SIZE = 2
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -31,7 +31,7 @@ CLC_DB = CLC_DB or {
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
   -- TESTING
-  --["Wool Cloth"] = true,
+  ["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
@@ -306,14 +306,13 @@ local function isCouncil(name)
     if uname == name then
       local gname, rank = GetGuildInfo(unit)
       local isLead = IsRaidLeader(unit)
-      local isAssist = IsRaidOfficer(unit)
       if rank == "Raider Veteran" then
-        return (isLead or isAssist) and true or false
+        return isLead and true or false
       end
       if rank and CLC_DB.councilRanks and CLC_DB.councilRanks[rank] then
         return true
       end
-      if isLead or isAssist then return true end
+      if isLead then return true end
       return false
     end
   end
@@ -374,7 +373,7 @@ local function endSession()
   if CLC_SessionActive then
     CLC_SessionActive = false
     CLC_Send("SESSION_END", playerName())
-    CLC_AnnouncedRowData = nil
+	CLC_AnnouncedRowData = nil
   end
 end
 
