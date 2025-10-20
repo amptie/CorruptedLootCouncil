@@ -3,7 +3,7 @@
 ------------------------------------------------------------
 -- SavedVariables / Defaults
 ------------------------------------------------------------
-local CLC_ITEM_RARITY_DECLARATION = 4
+local CLC_ITEM_RARITY_DECLARATION = 1
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
 local MIN_RAID_SIZE = 2
 
@@ -13,6 +13,7 @@ CLC_DB = CLC_DB or {
   ["Tower of Karazhan"] = true,
   ["The Rock of Desolation"] = true,
   ["Rock of Desolation"] = true,
+  ["The Stockades"] = true,
   },
   itemWhitelist = {
   ["Carapace Handguards"] = true,
@@ -30,8 +31,6 @@ CLC_DB = CLC_DB or {
   ["Emerald Drake"] = true,
   ["Formula: Eternal Dreamstone Shard"] = true,
   ["Tiny Warp Stalker"] = true,
-  -- TESTING
-  ["Wool Cloth"] = true,
   },
   meta = CLC_DB and CLC_DB.meta or {
     zonesVersion = 1,
@@ -150,6 +149,8 @@ CLC_OfficerIndex = 1
 CLC_ItemWindows = {}
 CLC_AnchorFrame = nil
 CLC_EditSeq = CLC_EditSeq or 0
+CLC_TmogRolls   = CLC_TmogRolls or {}  -- [itemKey][player] = roll(1..10)
+CLC_PendingRoll = CLC_PendingRoll or nil
 
 -- Pending Rolls (echte Chat-Rolls abwarten)
 CLC_PendingRollQueues = CLC_PendingRollQueues or { ["1-10"] = {}, ["1-100"] = {} }
@@ -241,6 +242,11 @@ local function RestorePos(frameRef, slot, defaultPoint, defaultRel, dx, dy)
   frameRef:ClearAllPoints()
   frameRef:SetPoint(s.point or defaultPoint, UIParent, s.rel or defaultRel, s.x or dx, s.y or dy)
 end
+
+
+------------------------------------- PATCH -------------------------------------------
+
+
 
 ------------------------------------------------------------
 -- Ränge / Council
@@ -468,35 +474,112 @@ function CLC_UpdateAnnouncedRow(playerName, choice)
     end
 end
 
+
+-- [A] Eindeutige Anzeige-Keys für Lootfenster
+CLC_UniqCounter     = CLC_UniqCounter or 0
+CLC_ItemWindows     = CLC_ItemWindows or {}
+CLC_WindowOrder     = CLC_WindowOrder or {}   -- deterministische Reihenfolge zum Stapeln
+local function _newWindowKey(baseKey)
+  CLC_UniqCounter = (CLC_UniqCounter or 0) + 1
+  return tostring(baseKey) .. "#occ" .. tostring(CLC_UniqCounter)
+end
+
+
 ------------------------------------------------------------
 -- Loot-Anker
 ------------------------------------------------------------
 local function EnsureAnchor()
   if CLC_AnchorFrame then return end
   local f = CreateFrame("Frame", "CLC_Anchor", UIParent)
-  f:SetWidth(140); f:SetHeight(28); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
-  local label=f:CreateFontString(nil,"OVERLAY","GameFontNormal"); label:SetPoint("CENTER", f, "CENTER", 0, 0); label:SetText("CLC Loot-Anker")
-  f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+  f:SetWidth(140); f:SetHeight(28); f:SetFrameStrata("DIALOG")
+  ApplyDialogBackdrop(f)
+  local label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  label:SetPoint("CENTER", f, "CENTER", 0, 0); label:SetText("CLC Loot-Anker")
+  f:SetMovable(true); f:EnableMouse(true)
+  f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() this:StartMoving() end)
-  f:SetScript("OnDragStop", function() this:StopMovingOrSizing(); SavePos(this, "anchor") end)
-  RestorePos(f, "anchor", "CENTER", "CENTER", 0, 0); f:Hide()
+  f:SetScript("OnDragStop",  function() this:StopMovingOrSizing(); SavePos(this, "anchor") end)
+  RestorePos(f, "anchor", "CENTER", "CENTER", 0, 0)
+  f:Hide()
   CLC_AnchorFrame = f
 end
 local function ShowAnchor() EnsureAnchor(); CLC_AnchorFrame:Show() end
 local function HideAnchor() if CLC_AnchorFrame then CLC_AnchorFrame:Hide() end end
 local function ResetAnchor() EnsureAnchor(); CLC_DB.ui.anchor={point="CENTER",rel="CENTER",x=0,y=0}; RestorePos(CLC_AnchorFrame,"anchor","CENTER","CENTER",0,0) end
 
+
+local function PositionLootWindowStack(f)
+  EnsureAnchor()
+  local s = CLC_DB and CLC_DB.ui and CLC_DB.ui.anchor or { point="CENTER", rel="CENTER", x=0, y=0 }
+  local idx = 1
+  -- index ist die Position in CLC_WindowOrder
+  for i=1, table.getn(CLC_WindowOrder) do
+    if CLC_WindowOrder[i] == f then idx = i; break end
+  end
+  f:ClearAllPoints()
+  local y = (s.y or 0) - (idx - 1) * (f:GetHeight() + 8)
+  f:SetPoint(s.point or "CENTER", UIParent, s.rel or "CENTER", s.x or 0, y)
+end
+
+local function _trackWindow(f)
+  -- Nur einmal in die Order-Liste hängen
+  for i=1, table.getn(CLC_WindowOrder) do
+    if CLC_WindowOrder[i] == f then return end
+  end
+  table.insert(CLC_WindowOrder, f)
+end
+
+local function _untrackWindow(f)
+  local out = {}
+  for i=1, table.getn(CLC_WindowOrder) do
+    if CLC_WindowOrder[i] ~= f then table.insert(out, CLC_WindowOrder[i]) end
+  end
+  CLC_WindowOrder = out
+  -- Nach Entfernen alle verbliebenen Frames neu stapeln
+  for i=1, table.getn(CLC_WindowOrder) do
+    PositionLootWindowStack(CLC_WindowOrder[i])
+  end
+end
+
+-- Hilfsfunktion einmal definieren
+local function CLC_EnqueueRoll(itemKey, choice, comment, mn, mx)
+  CLC_PendingRollQueues = CLC_PendingRollQueues or {}
+  local kk = tostring(mn).."-"..tostring(mx)
+  CLC_PendingRollQueues[kk] = CLC_PendingRollQueues[kk] or {}
+  table.insert(CLC_PendingRollQueues[kk], { key = itemKey, choice = choice, comment = comment or "" })
+end
+
+
+
 ------------------------------------------------------------
 -- Loot-Popup (draggable, kompakt, Roll-Buttons)
 ------------------------------------------------------------
-local function CLC_CloseItemWindow(key) local f=CLC_ItemWindows[key]; if f then f:Hide(); CLC_ItemWindows[key]=nil end end
+local function CLC_CloseItemWindow(uniqKey)
+  local f = CLC_ItemWindows[uniqKey]
+  if f then
+    CLC_ItemWindows[uniqKey] = nil
+    _untrackWindow(f)
+    f:Hide()
+  end
+end
 
-local function CLC_SendResponse(key, choice, comment, roll)
-  if not choice then choice="PASS" end
-  if not comment then comment="" end
-  if not roll then roll="" end
-  local payload = key.."^"..playerName().."^"..choice.."^"..comment.."^"..tostring(roll)
+-- [D] Responses wie gehabt (nutzt logischen Item-Key)
+local function CLC_SendResponse(itemKey, choice, comment, roll)
+  if not choice then choice = "PASS" end
+  if not comment then comment = "" end
+  if not roll then roll = "" end
+  local payload = itemKey .. "^" .. playerName() .. "^" .. choice .. "^" .. comment .. "^" .. tostring(roll)
   CLC_Send("RESPONSE", payload)
+end
+
+local function CLC_SendTmogRoll(itemKey, roll)
+  local p = playerName()
+  CLC_TmogRolls[itemKey] = CLC_TmogRolls[itemKey] or {}
+  CLC_TmogRolls[itemKey][p] = roll
+  CLC_Send("TMOGROLL", itemKey.."^"..p.."^"..tostring(roll))
+  if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then
+    CLC_RefreshOfficerList()
+  end
 end
 
 local function CLC_SortOrder(choice)
@@ -517,149 +600,151 @@ local function PositionLootWindow(f, idx)
   f:SetPoint(s.point or "CENTER", UIParent, s.rel or "CENTER", s.x or 0, y)
 end
 
-local function CLC_CreateItemWindow(itemLink, iconTex)
-  local key = itemKeyFromLink(itemLink)
-  if CLC_ItemWindows[key] then CLC_CloseItemWindow(key) end
+local function CLC_PerformTMOG(frame)
+  if frame._tmogDone then return end
+  frame._tmogDone = true
 
+  -- UI-Feedback
+  if frame.bTM then frame.bTM:Disable(); frame.bTM:SetText("TMOG ✓") end
+
+  -- Pending-Roll merken & echten Spiel-Roll feuern
+  CLC_PendingRoll = { player = playerName(), low = 1, high = 10, itemKey = frame._itemKey, expires = (GetTime and GetTime() or 0) + 10 }
+  RandomRoll(1, 10)
+end
+
+
+
+-- [E] Lootfenster mit AtlasLoot-sicheren Tooltips + eindeutigen Keys
+local function CLC_CreateItemWindow(itemLink, iconTex)
+  -- LOGISCHER Schlüssel für Votes/Messages:
+  local logicalKey = itemKeyFromLink(itemLink)  -- dein bestehendes Mapping
+  -- ANZEIGE-Schlüssel (eindeutig für jedes Auftreten):
+  local uniqKey = _newWindowKey(logicalKey)
+
+  -- Frame erstellen
   local f = CreateFrame("Frame", "CLC_ItemWin_"..tostring(now()), UIParent)
   f:SetWidth(380); f:SetHeight(150); f:SetFrameStrata("DIALOG"); ApplyDialogBackdrop(f)
-
-  -- Close-Button (X) oben rechts: entspricht "Pass"
-  local closeX = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  closeX:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
-  closeX:SetScript("OnClick", function() CLC_SendResponse(key, "PASS", ""); CLC_CloseItemWindow(key) end)
-
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function() this:StartMoving() end)
   f:SetScript("OnDragStop",  function() this:StopMovingOrSizing() end)
   f:SetClampedToScreen(true)
 
+  -- Metadaten am Frame
+  f._itemKey  = logicalKey
+  f._uniqKey  = uniqKey
 
-  -- Buttons kompakt in 2 Reihen
+  -- Close (X) oben rechts -> zählt als PASS
+  local closeX = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+  closeX:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+  closeX:SetScript("OnClick", function()
+    CLC_SendResponse(f._itemKey, "PASS", "")
+    CLC_CloseItemWindow(f._uniqKey)
+  end)
+
+  -- Icon links
+  local icon = f:CreateTexture(nil, "ARTWORK")
+  icon:SetTexture(iconTex or "Interface\\Icons\\INV_Misc_QuestionMark")
+  icon:SetTexCoord(0.06,0.94,0.06,0.94)
+  icon:SetWidth(32); icon:SetHeight(32)
+  icon:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+
+  -- Itemtitel (Zeile)
+  local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  fs:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+  fs:SetText(itemLink)
+
+  -- Tooltip-Button über dem Icon: akzeptiert NUR echte Itemlinks (AtlasLoot-kompatibel)
+  local iconBtn = CreateFrame("Button", nil, f)
+  iconBtn:SetAllPoints(icon)
+  iconBtn.itemLink = itemLink
+  iconBtn:SetScript("OnEnter", function()
+  GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
+
+  local link = this.itemLink
+  -- Versuche zuerst, eine ItemID aus dem Link zu ziehen
+  local itemID = nil
+  if link then
+    itemID = string.match(link, "item:(%d+)")
+  end
+
+  if itemID then
+    -- Gib NUR die item:-Zeichenkette an SetHyperlink (AtlasLoot-sicher)
+    GameTooltip:SetHyperlink("item:" .. itemID)
+  elseif link and string.find(link, "|Hitem:%d+:") then
+    -- Fallback: falls oben unerwartet nicht gematcht hat, versuche den vollen Link
+    -- (sollte eigentlich nicht mehr nötig sein)
+    GameTooltip:SetHyperlink(link)
+  else
+    -- Letzter Fallback: nur Name anzeigen, wenn kein valider Link vorhanden
+    local name = link and string.match(link, "%[([^%]]+)%]") or "Unknown Item"
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine(name, 1, 1, 1)
+  end
+
+  GameTooltip:Show()
+end)
+iconBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  -- Buttons (Beispiele – nutze deine vorhandenen mkBtn/Callbacks falls vorhanden)
   local function mkBtn(label, x, y, w)
     local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    b:SetText(label); b:SetWidth(w or 60); b:SetHeight(20); b:SetPoint("TOPLEFT", f, "TOPLEFT", x, y); return b
+    b:SetText(label); b:SetWidth(w or 60); b:SetHeight(20)
+    b:SetPoint("TOPLEFT", f, "TOPLEFT", x, y)
+    return b
   end
   local bBiS  = mkBtn("BiS",     14, -46)
   local bUpg  = mkBtn("Upgrade", 14+64, -46, 76)
   local bOSp  = mkBtn("OS+",     14+64+84, -46)
   local bOS   = mkBtn("OS",      14+64+84+64, -46)
   local bTM   = mkBtn("TMOG",    14, -46-24, 76)
-  local bRoll = mkBtn("Roll",    14+84, -46-24, 60)
-  local bPass = mkBtn("Pass",    14+84+68, -46-24, 60)
+  local bRoll = mkBtn("Roll",    14+84, -46-24)
 
-  -- Kommentar rechts, tiefer
-  CLC_EditSeq = CLC_EditSeq + 1
-  local edit = CreateFrame("EditBox", "CLC_ItemEdit_"..tostring(CLC_EditSeq), f, "InputBoxTemplate")
-  edit:SetAutoFocus(false); edit:SetWidth(200); edit:SetHeight(20)
-  edit:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -105)
-  edit:SetFrameLevel(f:GetFrameLevel() + 1)
-  local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  lbl:SetPoint("BOTTOMRIGHT", edit, "TOPRIGHT", 0, 2); lbl:SetText("Kommentar")
+	-- Label
+	local cLbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	cLbl:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -100)
+	cLbl:SetText("Kommentar")
 
-	------------- TOOLTIP -----------------
-	 -- Icon-Button statt separatem Texture
-	local iconButton = CreateFrame("Button", nil, f)
-	iconButton:SetWidth(30)
-	iconButton:SetHeight(30)
-	iconButton:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+	-- EditBox
+	local cEB = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+	cEB:SetPoint("TOPLEFT", cLbl, "BOTTOMLEFT", 0, -2)
+	cEB:SetWidth(260); cEB:SetHeight(20)
+	cEB:SetAutoFocus(false)
+	cEB:SetMaxLetters(120)
+	cEB:SetText("")
+	f.commentEB = cEB
 
-	-- Texture für Icon
-	local tex = iconButton:CreateTexture(nil, "BACKGROUND")
-	tex:SetAllPoints(iconButton)
-	tex:SetTexture(iconTex or "Interface\\Icons\\INV_Misc_QuestionMark")
-	tex:SetTexCoord(0.06, 0.94, 0.06, 0.94)
 
-	-- Mouseover Tooltip
-	iconButton.itemLink = itemLink
-	iconButton:SetScript("OnEnter", function()
-		if not this.itemLink then return end
-		GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
-		if string.match(this.itemLink, "|Hitem:%d+:") then
-			GameTooltip:SetHyperlink(this.itemLink)
-		else
-			local name = string.match(this.itemLink, "%[([^%]]+)%]") or "Unknown Item"
-			GameTooltip:SetText(name)
-		end
-		GameTooltip:Show()
-	end)
-	iconButton:SetScript("OnLeave", function()
-		GameTooltip:Hide()
+	local function chooseAndClose(choice, comment, roll)
+	  local comm = comment
+	  if not comm and f.commentEB and f.commentEB.GetText then
+		comm = f.commentEB:GetText()
+	  end
+	  CLC_SendResponse(f._itemKey, choice, comm or "", roll)
+	  CLC_CloseItemWindow(f._uniqKey)
+	end
+
+  f.bTM = bTM
+
+	-- TMOG: führt /roll 1-10 aus, registriert Response, bleibt offen
+	bTM:SetScript("OnClick", function()
+	  CLC_PerformTMOG(f)
 	end)
 
-	-- Item-Link FontString neben Icon
-	local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	fs:SetPoint("LEFT", iconButton, "RIGHT", 8, 0)
-	fs:SetText(itemLink)
-
-
-  -- Countdown-Balken (1.12)
-  local barW = f:GetWidth() - 28
-  local barH = 8
-
-  local barBG = f:CreateTexture(nil, "BACKGROUND")
-  barBG:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
-  barBG:SetWidth(barW); barBG:SetHeight(barH)
-  barBG:SetTexture(0, 0, 0); barBG:SetAlpha(0.5)
-
-  local bar = CreateFrame("StatusBar", nil, f)
-  bar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 14, 14)
-  bar:SetWidth(barW); bar:SetHeight(barH)
-  bar:SetStatusBarTexture("Interface\\TARGETINGFRAME\\UI-StatusBar")
-  bar:SetStatusBarColor(0.0, 0.7, 1.0)
-  bar:SetMinMaxValues(0, CLC_DB.lootDuration)
-  bar:SetValue(CLC_DB.lootDuration)
-
-  local timeText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  timeText:SetPoint("CENTER", bar, "CENTER", 0, 0)
-  timeText:SetText(tostring(CLC_DB.lootDuration).."s")
-
-  -- Gemeinsames OnUpdate
-  f.key       = key
-  f.bar       = bar
-  f.timeText  = timeText
-  f.timeLeft  = CLC_DB.lootDuration
-  f:SetScript("OnUpdate", function()
-    this.timeLeft = this.timeLeft - arg1
-    if this.timeLeft < 0 then this.timeLeft = 0 end
-    this.bar:SetValue(this.timeLeft)
-    this.timeText:SetText(tostring(math.floor(this.timeLeft)).."s")
-    if this.timeLeft <= 0 then
-      CLC_CloseItemWindow(this.key)
-      this:SetScript("OnUpdate", nil)
-    end
-  end)
-
-  local function chooseAndClose(choice, roll, doRollChatMin, doRollChatMax)
-    CLC_SendResponse(key, choice, edit:GetText(), roll)
-    if doRollChatMin and doRollChatMax then RandomRoll(doRollChatMin, doRollChatMax) end
-    CLC_CloseItemWindow(key)
-  end
-
-  bBiS:SetScript("OnClick", function() chooseAndClose("BIS") end)
-  bUpg:SetScript("OnClick", function() chooseAndClose("UPGRADE") end)
-  bOSp:SetScript("OnClick", function() chooseAndClose("OS+") end)
-  bOS:SetScript("OnClick",  function() chooseAndClose("OS") end)
-
-  bTM:SetScript("OnClick", function()
-    CLC_PendingRollQueues["1-10"] = CLC_PendingRollQueues["1-10"] or {}
-    table.insert(CLC_PendingRollQueues["1-10"], { key=key, choice="TMOG", comment=edit:GetText() or "" })
-    RandomRoll(1,10)
-    CLC_CloseItemWindow(key)
-  end)
-
+  bBiS:SetScript("OnClick",  function() chooseAndClose("BIS") end)
+  bUpg:SetScript("OnClick",  function() chooseAndClose("UPGRADE") end)
+  bOSp:SetScript("OnClick",  function() chooseAndClose("OS+") end)
+  bOS:SetScript("OnClick",   function() chooseAndClose("OS") end)
   bRoll:SetScript("OnClick", function()
-    CLC_PendingRollQueues["1-100"] = CLC_PendingRollQueues["1-100"] or {}
-    table.insert(CLC_PendingRollQueues["1-100"], { key=key, choice="ROLL", comment=edit:GetText() or "" })
-    RandomRoll(1,100)
-    CLC_CloseItemWindow(key)
+		local comm = f.commentEB and f.commentEB:GetText() or ""
+	  CLC_EnqueueRoll(f._itemKey, "ROLL", comm, 1, 100)
+	  RandomRoll(1, 100)
+	  CLC_CloseItemWindow(f._uniqKey)
   end)
 
-  bPass:SetScript("OnClick", function() chooseAndClose("PASS") end)
-
-  CLC_ItemWindows[key] = f
-  local idx = 1; local k,_f; for k,_f in pairs(CLC_ItemWindows) do if _f ~= f then idx = idx + 1 end end
-  PositionLootWindow(f, idx)
+  -- Anzeigen-Register führen & positionieren
+  CLC_ItemWindows[uniqKey] = f
+  _trackWindow(f)
+  PositionLootWindowStack(f)
   f:Show()
 end
 
@@ -745,102 +830,156 @@ end
 -- Refresh Officer Panel
 ------------------------------------------------------------
 function CLC_RefreshOfficerList()
-    if not CLC_OfficerFrame then return end
-    local idx = CLC_OfficerIndex
-    local key = CLC_Items[idx]
+  if not CLC_OfficerFrame then return end
 
-    -- Höhe des Panels anpassen
-    local function setHeightFor(n)
-        local h = TOP_PAD + (n * ROW_H) + BOT_PAD
-        if h < 180 then h = 180 end
-        if h > 800 then h = 800 end
-        CLC_OfficerFrame:SetHeight(h)
-    end
+  local idx = CLC_OfficerIndex
+  local key = CLC_Items[idx]
 
-    -- Kein Item vorhanden
-    if not key then
-        CLC_OfficerFrame.title:SetText("Keine Items")
-        for i=1, CLC_MAX_ROWS do
-            CLC_RowFrames[i]:Hide()
-        end
-        setHeightFor(0)
-        return
-    end
+  local function setHeightFor(n)
+    local h = TOP_PAD + (n * ROW_H) + BOT_PAD
+    if h < 180 then h = 180 end
+    if h > 800 then h = 800 end
+    CLC_OfficerFrame:SetHeight(h)
+  end
 
-    CLC_OfficerFrame.title:SetText(CLC_ItemTextFromLink(key))
+  if not key then
+    CLC_OfficerFrame.title:SetText("Keine Items")
+    for i = 1, CLC_MAX_ROWS do if CLC_RowFrames[i] then CLC_RowFrames[i]:Hide() end end
+    setHeightFor(0)
+    return
+  end
 
-    -- Rows vorbereiten
-    local rows = {}
+  CLC_OfficerFrame.title:SetText(CLC_ItemTextFromLink(key))
+
+  ------------------------------------------------------------
+  -- Rows: 1) normal (ohne PASS, sortiert)  2) bester TMOG on top
+  ------------------------------------------------------------
+  local rows = {}
+
+  -- 1) Normale Responses
+  do
     local src = CLC_Responses[key] or {}
-    for i=1, tlen(src) do
-        local r = src[i]
-        if r.choice ~= "PASS" then table.insert(rows, r) end
+    for i = 1, table.getn(src) do
+      local r = src[i]
+      if r.choice ~= "PASS" then
+        table.insert(rows, r)
+      end
     end
-
     CLC_SortResponsesFor(key)
     rows = filterTopRolls(rows)
+  end
 
-    local count = tlen(rows)
-    setHeightFor(count)
+  -- 2) Höchste(r) TMOG als Zusatzzeile(n) ganz oben
+	do
+	  local tm = CLC_TmogRolls and CLC_TmogRolls[key]
+	  if tm then
+		-- 1) Max-Roll bestimmen
+		local maxRoll = -1
+		for _, roll in pairs(tm) do
+		  local rv = tonumber(roll) or 0
+		  if rv > maxRoll then maxRoll = rv end
+		end
+		-- 2) Alle Spieler mit maxRoll sammeln
+		if maxRoll > 0 then
+		  local top = {}
+		  for pname, roll in pairs(tm) do
+			local rv = tonumber(roll) or 0
+			if rv == maxRoll then
+			  table.insert(top, { name = pname, choice = "TMOG", roll = rv, comment = "", _isTMOG = true })
+			end
+		  end
+		  -- 3) Schön sortieren (Name) und ALLE oben einfügen (stabile Reihenfolge)
+		  table.sort(top, function(a,b) return (a.name or "") < (b.name or "") end)
+		  for i = table.getn(top), 1, -1 do
+			table.insert(rows, 1, top[i])
+		  end
+		end
+	  end
+	end
 
-    for i=1, CLC_MAX_ROWS do
-        local rf = CLC_RowFrames[i]
-        local r = rows[i]
+  setHeightFor(table.getn(rows))
 
-        if rf then
-            if r then
-                -- FontStrings setzen
-                rf.nameFS:SetText(r.name or "?")
-                local choiceTxt = tostring(r.choice or "?")
-                if (r.choice == "TMOG" or r.choice == "ROLL") and (r.roll or 0) > 0 then
-                    choiceTxt = choiceTxt.." ("..tostring(r.roll)..")"
-                end
-                rf.choiceFS:SetText(choiceTxt)
-                rf.rankFS:SetText(getDisplayRank(r.name or ""))
-                rf.commentFS:SetText(r.comment or "")
+  -----------------------------------------------------
+  -- Rendering
+  -----------------------------------------------------
+  for i = 1, CLC_MAX_ROWS do
+    local rf = CLC_RowFrames[i]
+    local r  = rows[i]
+    if rf then
+      if r then
+        rf.nameFS:SetText(r.name or "?")
 
-                -- Vote Button
-                local voted = CLC_HasVoted(key, playerName(), r.name or "")
-                rf.voteBtn:SetText(voted and "Unvote" or "Vote")
-                rf.voteBtn:SetScript("OnClick", function()
-                    CLC_ToggleVote(key, r.name or "")
-                    CLC_RefreshOfficerList()
-                end)
-
-                -- Vote Count
-                rf.countFS:SetText(tostring(CLC_VoteCount(key, r.name or "")))
-
-                -- Zeile anzeigen
-                rf:Show()
-
-                -- -------------- ANOUNCE MARKIERUNG -----------------
-                local rowPlayer = r.name or ""
-                local rowChoice = tostring(r.choice or "")
-                rowChoice = string.gsub(rowChoice, "%s*%(.+%)", "") -- Roll entfernen
-                rowChoice = string.gsub(rowChoice, "^%s*(.-)%s*$","%1") -- trim whitespace
-
-                if CLC_AnnouncedRowData
-                   and CLC_AnnouncedRowData.playerName == rowPlayer
-                   and CLC_AnnouncedRowData.choice == rowChoice then
-                    rf:SetBackdropColor(0,0,0,0)  -- grün
-                    rf.nameFS:SetTextColor(0,0.6,0,0.5)
-                    rf.choiceFS:SetTextColor(0,0.6,0,0.5)
-                    rf.rankFS:SetTextColor(0,0.6,0,0.5)
-                    rf.commentFS:SetTextColor(0,0.6,0,0.5)
-                else
-                    rf:SetBackdropColor(0,0,0,0) -- Standardfarbe
-                    rf.nameFS:SetTextColor(1,1,1)
-                    rf.choiceFS:SetTextColor(1,1,1)
-                    rf.rankFS:SetTextColor(1,1,1)
-                    rf.commentFS:SetTextColor(1,1,1)
-                end
-
-            else
-                rf:Hide()
-            end
+        local choiceTxt
+        if (r._isTMOG == true) or (r.choice == "TMOG") then
+          choiceTxt = "TMOG (" .. tostring(r.roll or 0) .. ")"
+        else
+          choiceTxt = tostring(r.choice or "?")
+          if (r.choice == "ROLL") and (r.roll or 0) > 0 then
+            choiceTxt = choiceTxt .. " (" .. tostring(r.roll) .. ")"
+          end
         end
+        rf.choiceFS:SetText(choiceTxt)
+
+        rf.rankFS:SetText(getDisplayRank(r.name or ""))
+        rf.commentFS:SetText(r.comment or "")
+
+        -- Vote/Count nur für Nicht-TMOG
+        do
+          local isTMOG = (r._isTMOG == true) or (r.choice == "TMOG")
+          if not isTMOG then
+            local k  = key
+            local tn = r.name or "?"
+
+            local voted = CLC_HasVoted(k, playerName(), tn)
+            rf.voteBtn:SetText(voted and "Unvote" or "Vote")
+            rf.voteBtn:Enable()
+            rf.voteBtn:Show()
+            rf.voteBtn:SetScript("OnClick", function()
+              CLC_ToggleVote(k, tn)
+              CLC_RefreshOfficerList()
+            end)
+
+            rf.countFS:SetText(tostring(CLC_VoteCount(k, tn)))
+
+            rf.countBtn:EnableMouse(true)
+            rf.countBtn:SetHitRectInsets(0, 0, 0, 0)
+            rf.countBtn:SetScript("OnEnter", function()
+              GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+              GameTooltip:ClearLines()
+              GameTooltip:AddLine("Votes", 1, 0.82, 0)
+              local voters = CLC_GetVoters(k, tn)
+              if table.getn(voters) == 0 then
+                GameTooltip:AddLine("Noch keine Stimmen", 1, 1, 1)
+              else
+                for j = 1, table.getn(voters) do
+                  GameTooltip:AddLine("- " .. (voters[j] or "?"), 0.9, 0.9, 0.9)
+                end
+              end
+              GameTooltip:Show()
+            end)
+            rf.countBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+          else
+            rf.voteBtn:SetText("—")
+            rf.voteBtn:Disable()
+            rf.voteBtn:Show()
+            rf.voteBtn:SetScript("OnClick", nil)
+
+            rf.countFS:SetText("")
+            rf.countBtn:EnableMouse(false)
+            rf.countBtn:SetScript("OnEnter", nil)
+            rf.countBtn:SetScript("OnLeave", nil)
+          end
+        end
+
+        rf:Show()
+      else
+        rf:Hide()
+      end
     end
+  end
 end
+
+
 
 ------------------------------------------------------------
 -- Show Officer Panel
@@ -1086,6 +1225,18 @@ local function CLC_OnMessage(sender, message)
       if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end
     end
 
+	elseif tag == "TMOGROLL" then
+	  local itemKey, who, roll = string.match(payload or "", "^([^%^]+)%^([^%^]+)%^(.+)$")
+	  roll = tonumber(roll or "0") or 0
+	  if itemKey and who and roll > 0 then
+		CLC_TmogRolls[itemKey] = CLC_TmogRolls[itemKey] or {}
+		CLC_TmogRolls[itemKey][who] = roll
+		if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then
+		  CLC_RefreshOfficerList()
+		end
+	  end
+
+
   elseif tag == "VOTE_REVOKE" then
     local key, voter, target = SMATCH(payload, "([^\^]+)%^([^\^]+)%^(.*)")
     if key and voter and target and CLC_Votes[key] and CLC_Votes[key][voter] then
@@ -1107,22 +1258,26 @@ local function CLC_OnMessage(sender, message)
   end
 end
 
--- Vote Toggle
+-- Vote Toggle (korrigiert: mit .. statt .)
 function CLC_ToggleVote(itemKey, target)
   local voter = playerName()
   if not itemKey then itemKey = "?" end
   if not target or target == "" then target = "?" end
-  local itemText = CLC_ItemTextFromLink(tostring(itemKey) or "?")
 
   CLC_Votes[itemKey] = CLC_Votes[itemKey] or {}
   CLC_Votes[itemKey][voter] = CLC_Votes[itemKey][voter] or {}
 
   if CLC_Votes[itemKey][voter][target] then
     CLC_Votes[itemKey][voter][target] = nil
-    CLC_Send("VOTE_REVOKE", itemKey.."^"..voter.."^"..target)
+    CLC_Send("VOTE_REVOKE", itemKey.."^"..voter.."^"..target)   -- <— hier .. !
   else
     CLC_Votes[itemKey][voter][target] = true
-    CLC_Send("VOTE", itemKey.."^"..voter.."^"..target)
+    CLC_Send("VOTE",        itemKey.."^"..voter.."^"..target)   -- <— hier .. !
+  end
+
+  -- Direkt lokal neu zeichnen (ohne auf Netz zu warten)
+  if isCouncil(playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then
+    CLC_RefreshOfficerList()
   end
 end
 
@@ -1253,21 +1408,35 @@ function CLC_OnEvent()
     CLC_InAllowedZone = inAllowedZone()
 
   elseif event == "CHAT_MSG_SYSTEM" then
-    local msg = arg1
-    if not msg then return end
-    local who, rollStr, minStr, maxStr = SMATCH(msg, "^([^%s]+).-(%d+)%s*%((%d+)%-(%d+)%)")
-    if not who or not rollStr or not minStr or not maxStr then return end
-    if who ~= playerName() then return end
+	  local msg = arg1
+	  if not msg then return end
 
-    local mn = tonumber(minStr) or 0
-    local mx = tonumber(maxStr) or 0
-    local k  = tostring(mn).."-"..tostring(mx)
-    local q = CLC_PendingRollQueues and CLC_PendingRollQueues[k]
-    if not q or table.getn(q) == 0 then return end
+	  -- Einmal parsen (passt für DE/EN): "Name rolls X (A-B)" / "Name würfelt X (A-B)"
+	  local who, rollStr, minStr, maxStr = SMATCH(msg, "^([^%s]+).-(%d+)%s*%((%d+)%-(%d+)%)")
+	  if not who or not rollStr or not minStr or not maxStr then return end
 
-    local entry = table.remove(q, 1)
-    local rnum  = tonumber(rollStr) or 0
-    CLC_Send("RESPONSE", entry.key.."^"..playerName().."^"..entry.choice.."^"..entry.comment.."^"..tostring(rnum))
-  end
+	  -- 1) TMOG: exakt 1–10 und nur wenn Pending aktiv ist – dann NICHT die Queue-Logik triggern
+	  if CLC_PendingRoll and who == CLC_PendingRoll.player and tonumber(minStr) == 1 and tonumber(maxStr) == 10 then
+		local rnum = tonumber(rollStr) or 0
+		if rnum > 0 then
+		  CLC_Send("TMOGROLL", (CLC_PendingRoll.itemKey or "?").."^"..playerName().."^"..tostring(rnum))
+		end
+		CLC_PendingRoll = nil
+		return
+	  end
+
+	  -- 2) Allgemeine Queue-Logik (z. B. für /roll 1–100 bei "ROLL")
+	  if who ~= playerName() then return end
+
+	  local mn = tonumber(minStr) or 0
+	  local mx = tonumber(maxStr) or 0
+	  local k  = tostring(mn).."-"..tostring(mx)
+	  local q = CLC_PendingRollQueues and CLC_PendingRollQueues[k]
+	  if not q or table.getn(q) == 0 then return end
+
+	  local entry = table.remove(q, 1)
+	  local rnum  = tonumber(rollStr) or 0
+	  CLC_Send("RESPONSE", entry.key.."^"..playerName().."^"..entry.choice.."^"..entry.comment.."^"..tostring(rnum))
+	end
 end
 frame:SetScript("OnEvent", CLC_OnEvent)
