@@ -3,9 +3,9 @@
 ------------------------------------------------------------
 -- SavedVariables / Defaults
 ------------------------------------------------------------
-local CLC_ITEM_RARITY_DECLARATION = 1
+local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 2
+local MIN_RAID_SIZE = 15
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -13,7 +13,6 @@ CLC_DB = CLC_DB or {
   ["Tower of Karazhan"] = true,
   ["The Rock of Desolation"] = true,
   ["Rock of Desolation"] = true,
-  ["The Stockades"] = true,
   },
   itemWhitelist = {
   ["Carapace Handguards"] = true,
@@ -243,6 +242,16 @@ local function RestorePos(frameRef, slot, defaultPoint, defaultRel, dx, dy)
   frameRef:SetPoint(s.point or defaultPoint, UIParent, s.rel or defaultRel, s.x or dx, s.y or dy)
 end
 
+-- Alle per-Session-Zustände wegräumen
+function CLC_WipePerSessionState()
+  CLC_TmogRolls = {}                 -- alle gespeicherten TMOG-Rolls verwerfen
+  CLC_PendingRoll = nil              -- evtl. laufender TMOG-Pending
+  CLC_PendingRollQueues = {}         -- Warteschlangen für /roll (z.B. 1-100)
+  -- UI ggf. aktualisieren
+  if CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then
+    CLC_RefreshOfficerList()
+  end
+end
 
 ------------------------------------- PATCH -------------------------------------------
 
@@ -380,6 +389,7 @@ local function endSession()
     CLC_SessionActive = false
     CLC_Send("SESSION_END", playerName())
 	CLC_AnnouncedRowData = nil
+	CLC_WipePerSessionState()
   end
 end
 
