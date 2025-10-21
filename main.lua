@@ -3,9 +3,9 @@
 ------------------------------------------------------------
 -- SavedVariables / Defaults
 ------------------------------------------------------------
-local CLC_ITEM_RARITY_DECLARATION = 1
+local CLC_ITEM_RARITY_DECLARATION = 4
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 2
+local MIN_RAID_SIZE = 15
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -13,7 +13,6 @@ CLC_DB = CLC_DB or {
   ["Tower of Karazhan"] = true,
   ["The Rock of Desolation"] = true,
   ["Rock of Desolation"] = true,
-  ["The Stockade"] = true,
   },
   itemWhitelist = {
   ["Carapace Handguards"] = true,
