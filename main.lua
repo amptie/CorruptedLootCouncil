@@ -3,9 +3,9 @@
 ------------------------------------------------------------
 -- SavedVariables / Defaults
 ------------------------------------------------------------
-local CLC_ITEM_RARITY_DECLARATION = 4
+local CLC_ITEM_RARITY_DECLARATION = 1
 -- Minimale Raidgröße, damit das Addon aktiv ist (z. B. 15 = nur K40)
-local MIN_RAID_SIZE = 15
+local MIN_RAID_SIZE = 2
 
 local ADDON = "CorruptedLootCouncil"
 CLC_DB = CLC_DB or {
@@ -13,6 +13,7 @@ CLC_DB = CLC_DB or {
   ["Tower of Karazhan"] = true,
   ["The Rock of Desolation"] = true,
   ["Rock of Desolation"] = true,
+  ["The Stockade"] = true,
   },
   itemWhitelist = {
   ["Carapace Handguards"] = true,
@@ -103,6 +104,7 @@ function CLC_EnsureDB()
   CLC_DB = CLC_DB or {}
   CLC_DB.zones = CLC_DB.zones or {}
   CLC_DB.itemWhitelist = CLC_DB.itemWhitelist or {}
+  CLC_DB.councilRanks = CLC_DB.councilRanks or {}
   CLC_DB.councilRanks = CLC_DB.councilRanks or {}
   CLC_DB.rankRaidTwink = CLC_DB.rankRaidTwink or {}
   CLC_DB.rankTwink     = CLC_DB.rankTwink     or {}
@@ -467,7 +469,7 @@ function CLC_UpdateAnnouncedRow(playerName, choice)
         local rowChoice = row.choiceFS:GetText() or ""
 
         -- Extrahiere nur den reinen Choice-Text (vor Klammern)
-        local pureChoice = string.match(rowChoice, "^[^(]+") or rowChoice
+        local pureChoice = SMATCH(rowChoice, "^[^(]+") or rowChoice
         pureChoice = pureChoice:gsub("%s+$","") -- trim
 
         local cleanChoice = choice:gsub("%s+$","") -- trim Announce-Choice
@@ -674,7 +676,7 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
   -- Versuche zuerst, eine ItemID aus dem Link zu ziehen
   local itemID = nil
   if link then
-    itemID = string.match(link, "item:(%d+)")
+    itemID = SMATCH(link, "item:(%d+)")
   end
 
   if itemID then
@@ -686,7 +688,7 @@ local function CLC_CreateItemWindow(itemLink, iconTex)
     GameTooltip:SetHyperlink(link)
   else
     -- Letzter Fallback: nur Name anzeigen, wenn kein valider Link vorhanden
-    local name = link and string.match(link, "%[([^%]]+)%]") or "Unknown Item"
+    local name = link and SMATCH(link, "%[([^%]]+)%]") or "Unknown Item"
     GameTooltip:ClearLines()
     GameTooltip:AddLine(name, 1, 1, 1)
   end
@@ -1236,7 +1238,7 @@ local function CLC_OnMessage(sender, message)
     end
 
 	elseif tag == "TMOGROLL" then
-	  local itemKey, who, roll = string.match(payload or "", "^([^%^]+)%^([^%^]+)%^(.+)$")
+	  local itemKey, who, roll = SMATCH(payload or "", "^([^%^]+)%^([^%^]+)%^(.+)$")
 	  roll = tonumber(roll or "0") or 0
 	  if itemKey and who and roll > 0 then
 		CLC_TmogRolls[itemKey] = CLC_TmogRolls[itemKey] or {}
