@@ -1,7 +1,7 @@
 -- database.lua - Defaults & EnsureDB
 
 -- TESTMODE (oben im Addon wie gewünscht)
-TESTMODE = true
+TESTMODE = false
 CLC_ITEM_RARITY_DECLARATION = (TESTMODE and 0) or 4          -- 0 im Test, 4 = episch live
 CLC_MIN_RAID_SIZE           = (TESTMODE and 2) or 15          -- 2 im Test, 15 live
 
