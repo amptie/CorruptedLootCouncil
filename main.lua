@@ -1002,6 +1002,38 @@ function CLC_OnEvent()
 
   elseif event == "LOOT_OPENED" then
     if not CLC_SessionActive then CLC_BroadcastLoot() end
+	-- ML-only: Boss-Quest-Items synthetisch hinzufügen, falls sie nicht sichtbar sind
+	if CanPlayerTriggerLoot() and CLC_DB and CLC_DB.bossQuestItems then
+	  local boss = UnitName("target")
+	  local entry = boss and CLC_DB.bossQuestItems[boss]
+	  if entry then
+		local itemID = entry.itemID
+		local wantKey = itemID and CLC_itemKeyFromLink("|Hitem:"..itemID..":0:0:0|h["..entry.name.."]|h")
+		local already = false
+
+		-- Prüfen, ob das Item ohnehin in der echten Lootliste ist
+		if wantKey and CLC_Items then
+		  local i
+		  for i=1, table.getn(CLC_Items) do
+			if CLC_Items[i] == wantKey then already = true; break end
+		  end
+		end
+
+		if not already then
+		  -- Violetten Link selbst bauen (episch)
+		  local link = string.format("|cffa335ee|Hitem:%d:0:0:0|h[%s]|h|r", itemID, entry.name)
+		  -- Icon: aus DB (fallback auf Fragezeichen)
+		  local icon = entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark"
+
+		  -- Session sicherstellen (ML darf starten)
+		  local wasActive = CLC_SessionActive
+		  if not wasActive then startSessionIfNeeded() end
+
+		  -- Broadcast wie reguläres ITEM, Count = 1
+		  CLC_Send("ITEM", link .. "^" .. icon .. "^1")
+		end
+	  end
+	end
 
   elseif event == "GUILD_ROSTER_UPDATE" then
     if isCouncil(CLC_playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end

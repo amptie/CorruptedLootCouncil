@@ -45,7 +45,7 @@ CLC_DB = CLC_DB or {
 	["Thymae"]=true, -- Ariestelle
 	["Yatamo"]=true, -- Yaijin
 	["Zacki"]=true, -- Zacka
-	["Sheeld"]=true, -- Sheed
+	["Sheeld"]=true, -- Sheed  
   },
   rankTwink     = CLC_DB and CLC_DB.rankTwink     or {
 	["Velaria"]=true, -- Celebrindal
@@ -81,7 +81,22 @@ CLC_DB = CLC_DB or {
 	["Sheedt"]=true, -- Sheed
 	["Shead"]=true, -- Sheed
 	["Sheedtha"]=true, -- Sheed
-	["Bulco"]=true, -- Sheed
+	["Bulco"]=true, -- Sheed  
+  },
+    -- >>> NEU: Boss → Quest-Item-Mapping <<<
+  bossQuestItems = {
+    ["Ley-Watcher Incantagos"] = {
+      itemID = 41403,
+      name   = "Enchanted Amethyst",
+      icon   = "Interface\\Icons\\INV_Enchant_ShardGlowingSmall",
+      quality= 4,
+    },
+    ["Mephistroth"] = {
+      itemID = 55579,
+      name   = "Heart of Mephistroth",
+      icon   = "Interface\\Icons\\BTNHeartAmulet",
+      quality= 4,
+    },
   },
   lootDuration = 60, -- Lootzeit
   ui = {
@@ -90,6 +105,7 @@ CLC_DB = CLC_DB or {
     ml      = { point="TOPRIGHT", rel="TOPRIGHT", x=-40, y=-160 },
   },
 }
+
 
 -- Robust initialisieren (keine Nil-Tabellen)
 function CLC_EnsureDB()
@@ -109,3 +125,4 @@ function CLC_EnsureDB()
     ml      = { point="TOPRIGHT", rel="TOPRIGHT", x=-40, y=-160 },
   }
 end
+
