@@ -6,3 +6,5 @@
 ## SavedVariables: CLC_DB
 
 main.lua
+database.lua
+utils.lua
