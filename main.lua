@@ -5,7 +5,10 @@ local ADDON = "CorruptedLootCouncil"
 -- require-like: stelle sicher, dass utils & database geladen sind (TOC Reihenfolge!)
 -- Hier keine realen require() Aufrufe, Classic lädt via .toc
 
+CLC_SyntheticSent = CLC_SyntheticSent or {}  -- [itemKey] = true für diese Session
 CLC_AnnouncedByItem = CLC_AnnouncedByItem or {}
+local TOP_PAD, ROW_H, BOT_PAD = 60, 20, 16
+local BOT_BAR_H = 36  -- << NEU: Höhe der Fußleiste
 
 ------------------------------------------------------------
 -- Ränge / Council
@@ -99,6 +102,16 @@ function CanPlayerTriggerLoot()
   end
 end
 
+local function CLC_UpdateAnnounceButton()
+  if not CLC_OfficerFrame or not CLC_OfficerFrame.announceBtn then return end
+  local allow = IsRaidLeader() or PlayerIsMasterLooter()
+  if allow then
+    CLC_OfficerFrame.announceBtn:Enable()
+  else
+    CLC_OfficerFrame.announceBtn:Disable()
+  end
+end
+
 ------------------------------------------------------------
 -- Zonen & Mindestgröße
 ------------------------------------------------------------
@@ -152,6 +165,7 @@ local function endSession()
 	CLC_AnnouncedByItem = {}
     -- 3) Raid informieren
     CLC_Send("SESSION_END", CLC_playerName())
+	CLC_SyntheticSent = {}
   end
 end
 
@@ -243,6 +257,7 @@ local function CLC_OnMessage(sender, message)
 	CLC_ItemWindows = {}
 	CLC_AnnouncedByItem = {}
 	CLC_WindowOrder = {}
+	CLC_SyntheticSent = {}
 
   elseif tag == "ITEM" then
     local lnk, icon, cntStr = SMATCH(payload, "([^^]+)%^([^%^]*)%^(.*)")
@@ -784,40 +799,47 @@ function CLC_ShowOfficerPanel()
       CLC_RowFrames[i] = row
     end
 
-    -- Announce (nur ML/RL) + Close unten rechts
-    f.announceBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    f.announceBtn:SetText("Announce"); f.announceBtn:SetWidth(90); f.announceBtn:SetHeight(22)
-    f.announceBtn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 10)
-    f.announceBtn:SetScript("OnClick", function()
+	-- === Fußleiste: fester Klickbereich über den Zeilen ===
+	local bottomBar = CreateFrame("Frame", nil, f)
+	bottomBar:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+	bottomBar:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+	bottomBar:SetHeight(BOT_BAR_H)
+	bottomBar:EnableMouse(true)  -- blockt Zeilen-Klicks sicher
+	bottomBar:SetFrameLevel(f:GetFrameLevel() + 5)
+	-- dezente Optik (optional)
+	local bbtex = bottomBar:CreateTexture(nil, "BACKGROUND")
+	bbtex:SetAllPoints(bottomBar)
+
+	-- Buttons: rechts, nebeneinander
+	f.announceBtn = CreateFrame("Button", nil, bottomBar, "UIPanelButtonTemplate")
+	f.announceBtn:SetText("Announce"); f.announceBtn:SetWidth(100); f.announceBtn:SetHeight(22)
+	f.announceBtn:SetPoint("RIGHT", bottomBar, "CENTER", 40, 3)
+
+	f.closeBtn = CreateFrame("Button", nil, bottomBar, "UIPanelButtonTemplate")
+	f.closeBtn:SetText("Schließen"); f.closeBtn:SetWidth(100); f.closeBtn:SetHeight(22)
+	f.closeBtn:SetPoint("RIGHT", bottomBar, "RIGHT", -10, 3)
+
+	-- Handler bleiben wie gehabt:
+	f.announceBtn:SetScript("OnClick", function()
 	  if not CanPlayerTriggerLoot() or not CLC_SelectedRow then return end
 	  local idx = CLC_OfficerIndex
 	  local key = CLC_Items[idx]; if not key then return end
 	  local pName  = CLC_SelectedRow.nameFS:GetText() or "?"
 	  local choice = CLC_SelectedRow.choiceFS:GetText() or "?"
 	  SendChatMessage(pName.." bekommt "..CLC_ItemTextFromLink(key).." für "..choice, "RAID_WARNING")
-
-	  -- NEU: beides setzen (Map + alte globale)
-	  CLC_AnnouncedByItem = CLC_AnnouncedByItem or {}
-	  CLC_AnnouncedByItem[key] = { playerName = pName, choice = choice }
-	  CLC_AnnouncedRowData     = { playerName = pName, choice = choice }
-
-	  CLC_RefreshOfficerList()
+	  -- (keine grüne Markierung mehr gewünscht)
 	end)
-    if not CanPlayerTriggerLoot() then f.announceBtn:Disable() end
-
-    f.closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    f.closeBtn:SetText("Schließen"); f.closeBtn:SetWidth(90); f.closeBtn:SetHeight(22)
-    f.closeBtn:SetPoint("BOTTOMRIGHT", f.announceBtn, "TOPRIGHT", 0, 6)
-    f.closeBtn:SetScript("OnClick", function() f:Hide() end)
+	f.closeBtn:SetScript("OnClick", function() f:Hide() end)
 
     CLC_OfficerFrame = f
   end
   CLC_OfficerFrame:Show()
   CLC_RefreshOfficerList()
+  CLC_UpdateAnnounceButton()
 end
 
 local function setOfficerHeightFor(n)
-  local h = TOP_PAD + (n * ROW_H) + BOT_PAD
+  local h = TOP_PAD + (n * ROW_H) + BOT_PAD + BOT_BAR_H  -- << BOT_BAR_H addiert
   if h < 180 then h = 180 end
   if h > 800 then h = 800 end
   CLC_OfficerFrame:SetHeight(h)
@@ -989,6 +1011,53 @@ local function onSystemRoll(msg)
   end
 end
 
+local function CLC_ML_MaybeInjectBossQuestItem()
+  if not (CanPlayerTriggerLoot() and CLC_DB and CLC_DB.bossQuestItems) then return end
+
+  local boss = UnitName("target")
+  local entry = boss and CLC_DB.bossQuestItems[boss]
+  if not entry then return end
+
+  local wantedID = entry.itemID
+  if not wantedID then return end
+
+  -- 1) Prüfen, ob das Item in der WIRKLICHEN Lootliste ist
+  local present = false
+  local i
+  for i = 1, GetNumLootItems() do
+    local link = GetLootSlotLink(i)
+    if link then
+      local id1 = SMATCH(link, "Hitem:(%d+):")
+      local id2 = SMATCH(link, "|Hitem:(%d+):")
+      local iid = tonumber(id1 or id2 or "0") or 0
+      if iid == wantedID then present = true; break end
+    end
+  end
+  if present then return end  -- ML sieht es → nichts synthetisch senden
+
+  -- 2) Key & Dedupe (gegen bereits gesendete synthetische Items der Session)
+  local link = string.format("|cffa335ee|Hitem:%d:0:0:0|h[%s]|h|r", wantedID, entry.name)
+  local key = CLC_itemKeyFromLink(link)
+  if CLC_SyntheticSent[key] then return end  -- bereits gesendet (z. B. erneuter Klick)
+  -- (zusätzlich schützt deine ITEM-Verarbeitung ohnehin via CLC_Items vor Duplikaten)
+
+  -- 3) Icon bestimmen (DB → GetItemInfo → Fallback)
+  local icon = entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark"
+  local iname, ilink, iquality, _, _, _, _, _, _, iicon = GetItemInfo(wantedID)
+  if ilink then link = ilink end
+  if iicon then icon = iicon end
+
+  -- 4) Session sicherstellen (ML darf starten)
+  if not CLC_SessionActive then
+    -- kleine Sicherheit: nur starten, wenn wirklich etwas zu senden ist
+    startSessionIfNeeded()
+  end
+
+  -- 5) Senden & merken
+  CLC_Send("ITEM", link.."^"..icon.."^1")
+  CLC_SyntheticSent[key] = true
+end
+
 function CLC_OnEvent()
   if event == "VARIABLES_LOADED" or event == "PLAYER_LOGIN" then
     CLC_EnsureDB()
@@ -998,42 +1067,13 @@ function CLC_OnEvent()
     CLC_IsRaid = CLC_isRaid(); CLC_InAllowedZone = inAllowedZone(); refreshGuildRoster()
 
   elseif event == "PLAYER_LOOT_METHOD_CHANGED" then
-    -- nichts nötig
+	CLC_IsRaid = CLC_isRaid(); CLC_InAllowedZone = inAllowedZone(); refreshGuildRoster()
+	CLC_UpdateAnnounceButton()
 
   elseif event == "LOOT_OPENED" then
     if not CLC_SessionActive then CLC_BroadcastLoot() end
 	-- ML-only: Boss-Quest-Items synthetisch hinzufügen, falls sie nicht sichtbar sind
-	if CanPlayerTriggerLoot() and CLC_DB and CLC_DB.bossQuestItems then
-	  local boss = UnitName("target")
-	  local entry = boss and CLC_DB.bossQuestItems[boss]
-	  if entry then
-		local itemID = entry.itemID
-		local wantKey = itemID and CLC_itemKeyFromLink("|Hitem:"..itemID..":0:0:0|h["..entry.name.."]|h")
-		local already = false
-
-		-- Prüfen, ob das Item ohnehin in der echten Lootliste ist
-		if wantKey and CLC_Items then
-		  local i
-		  for i=1, table.getn(CLC_Items) do
-			if CLC_Items[i] == wantKey then already = true; break end
-		  end
-		end
-
-		if not already then
-		  -- Violetten Link selbst bauen (episch)
-		  local link = string.format("|cffa335ee|Hitem:%d:0:0:0|h[%s]|h|r", itemID, entry.name)
-		  -- Icon: aus DB (fallback auf Fragezeichen)
-		  local icon = entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark"
-
-		  -- Session sicherstellen (ML darf starten)
-		  local wasActive = CLC_SessionActive
-		  if not wasActive then startSessionIfNeeded() end
-
-		  -- Broadcast wie reguläres ITEM, Count = 1
-		  CLC_Send("ITEM", link .. "^" .. icon .. "^1")
-		end
-	  end
-	end
+	CLC_ML_MaybeInjectBossQuestItem()
 
   elseif event == "GUILD_ROSTER_UPDATE" then
     if isCouncil(CLC_playerName()) and CLC_OfficerFrame and CLC_OfficerFrame:IsShown() then CLC_RefreshOfficerList() end
