@@ -17,7 +17,6 @@ CLC_DB = CLC_DB or {
     ["Carapace Handguards"] = true,
     ["Gloves of the Primordial Burrower"] = true,
     ["Badge of the Swarmguard"] = true,
-    ["Eyestalk Waist Cord"] = true,
     ["Yshgo'lar, Cowl of Fanatical Devotion"] = true,
     ["Spotted Qiraji Battle Tank"] = true,
     ["Kiss of the Spider"] = true,
